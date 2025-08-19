@@ -12,49 +12,49 @@ COPY Procfile /home/extralit/Procfile
 COPY pyproject.toml /packages/pyproject.toml
 COPY src /home/extralit/src
 
-# Install required APT dependencies
-RUN apt-get update && \
+# Install required APT dependencies and add repositories (combined for better caching)
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && \
     apt-get install -y --no-install-recommends \
     apt-transport-https \
     gnupg \
     wget \
     lsb-release \
-    ca-certificates && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    ca-certificates
 
-# Add Elasticsearch repository
+# Add Elasticsearch and Redis repositories (combined for better caching)
 RUN wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch \
     | gpg --dearmor -o /usr/share/keyrings/elasticsearch-keyring.gpg && \
     echo "deb [signed-by=/usr/share/keyrings/elasticsearch-keyring.gpg] https://artifacts.elastic.co/packages/8.x/apt stable main" \
-    | tee /etc/apt/sources.list.d/elastic-8.x.list
-
-# Add Redis repository (using bookworm as trixie is not supported)
-RUN wget -qO - https://packages.redis.io/gpg \
+    | tee /etc/apt/sources.list.d/elastic-8.x.list && \
+    wget -qO - https://packages.redis.io/gpg \
     | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
     echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb bookworm main" \
     | tee /etc/apt/sources.list.d/redis.list
 
-RUN apt-get update
-
 # Create data directory
 RUN mkdir -p /data && chown extralit:extralit /data
 
-# Install Elasticsearch (pinned) and fix permissions
-RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends elasticsearch=8.17.0 && \
+# Install Elasticsearch, Redis and utilities with apt cache mount
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    elasticsearch=8.17.0 \
+    redis \
+    curl \
+    jq \
+    pwgen && \
     chown -R extralit:extralit /usr/share/elasticsearch /etc/elasticsearch /var/lib/elasticsearch /var/log/elasticsearch && \
     chown extralit:extralit /etc/default/elasticsearch
 
-# Install Redis server
-RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends redis
-
-# Install Python deps, utilities, then clean up
+# Install Python deps and clean up build dependencies
 RUN pip install --no-cache-dir /packages && \
     chmod +x /home/extralit/start.sh /home/extralit/Procfile && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl jq pwgen && \
     apt-get remove -y gnupg && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/* /packages
+    apt-get autoremove -y && \
+    rm -rf /packages
 
 # Copy Elasticsearch config
 COPY config/elasticsearch.yml /etc/elasticsearch/elasticsearch.yml

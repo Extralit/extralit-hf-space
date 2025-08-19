@@ -82,6 +82,8 @@ jobs:
             ${{ env.REPO }}:${{ env.IMAGE_TAG }}
             ${{ env.REPO }}:latest
           push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Docker Hub Description for `extralit-hf-space`
         uses: peter-evans/dockerhub-description@v4
