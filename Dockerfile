@@ -49,7 +49,7 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends el
 RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends redis
 
 # Install Python deps, utilities, then clean up
-RUN uv pip install --no-cache-dir /packages && \
+RUN pip install --no-cache-dir /packages && \
     chmod +x /home/extralit/start.sh /home/extralit/Procfile && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl jq pwgen && \
     apt-get remove -y gnupg && \
