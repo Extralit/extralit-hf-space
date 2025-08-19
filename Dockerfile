@@ -9,7 +9,7 @@ USER root
 # Copy HF-Space startup scripts and Procfile
 COPY scripts/start.sh /home/extralit/start.sh
 COPY Procfile /home/extralit/Procfile
-COPY requirements.txt /packages/requirements.txt
+COPY pyproject.toml /packages/pyproject.toml
 COPY src /home/extralit/src
 
 # Install required APT dependencies
@@ -49,7 +49,7 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends el
 RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends redis
 
 # Install Python deps, utilities, then clean up
-RUN pip install --no-cache-dir -r /packages/requirements.txt && \
+RUN uv pip install --no-cache-dir /packages && \
     chmod +x /home/extralit/start.sh /home/extralit/Procfile && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl jq pwgen && \
     apt-get remove -y wget gnupg && \
