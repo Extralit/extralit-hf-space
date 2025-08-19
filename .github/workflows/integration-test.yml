@@ -21,7 +21,7 @@ jobs:
       - name: Build Docker image
         run: |
           docker build -t extralit-hf-space:latest \
-            --build-arg EXTRALIT_SERVER_IMAGE=extralit/extralit-server \
+            --build-arg EXTRALIT_SERVER_IMAGE=extralitdev/extralit-server \
             --build-arg EXTRALIT_VERSION=latest \
             .
 
