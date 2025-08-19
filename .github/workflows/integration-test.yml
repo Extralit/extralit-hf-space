@@ -36,6 +36,7 @@ jobs:
             -p 6900:6900 \
             -p 9200:9200 \
             -p 6379:6379 \
+            -p 9229:9229 \
             extralit-hf-space:latest
 
       - name: Copy oauth config to container

@@ -1,14 +1,14 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
 
 [project]
 name = "extralit-hf-space"
 version = "0.1.0"
 description = "Extralit HuggingFace Space with Elasticsearch and Redis"
-readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.8"
+packages = ["src"]
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
@@ -27,8 +27,12 @@ dev = [
     "mypy",
 ]
 
-[tool.hatch.build.targets.wheel]
-packages = ["src"]
+[tool.pdm]
+package-dir = "src"
+
+[tool.pdm.build]
+includes = ["src/"]
+package-data = {"src" = ["*"]}
 
 [tool.uv]
 dev-dependencies = [
