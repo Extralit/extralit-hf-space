@@ -29,10 +29,10 @@ RUN wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch \
     echo "deb [signed-by=/usr/share/keyrings/elasticsearch-keyring.gpg] https://artifacts.elastic.co/packages/8.x/apt stable main" \
     | tee /etc/apt/sources.list.d/elastic-8.x.list
 
-# Add Redis repository
+# Add Redis repository (using bookworm as trixie is not supported)
 RUN wget -qO - https://packages.redis.io/gpg \
     | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" \
+    echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb bookworm main" \
     | tee /etc/apt/sources.list.d/redis.list
 
 RUN apt-get update
@@ -52,7 +52,7 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends re
 RUN uv pip install --no-cache-dir /packages && \
     chmod +x /home/extralit/start.sh /home/extralit/Procfile && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl jq pwgen && \
-    apt-get remove -y wget gnupg && \
+    apt-get remove -y gnupg && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /packages
 
