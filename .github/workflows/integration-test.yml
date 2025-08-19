@@ -42,6 +42,9 @@ jobs:
             -p 9200:9200 \
             -p 6379:6379 \
             -p 9229:9229 \
+            -e USERNAME=extralit \
+            -e PASSWORD=12345678 \
+            -e API_KEY=extralit.apikey \
             extralit-hf-space:latest
 
       - name: Copy oauth config to container
@@ -51,43 +54,17 @@ jobs:
       - name: Wait for services to initialize
         run: |
           echo "Waiting for services to start..."
-          echo "Initial wait for Elasticsearch and Redis to start..."
-          sleep 45
-          
-          # Wait up to 180 seconds for the service to be ready (accounting for 30s sleep + startup time)
-          timeout=180
-          elapsed=45
-          
-          while [ $elapsed -lt $timeout ]; do
-            # Check if extralit server is ready
-            if docker exec extralit-container curl -f -s http://127.0.0.1:6900/api/v1/version > /dev/null 2>&1; then
-              echo "✅ Extralit server is ready after ${elapsed}s"
-              break
-            fi
-            
-            echo "Extralit server not ready yet, waiting... (${elapsed}s elapsed)"
-            sleep 15
-            elapsed=$((elapsed + 15))
-          done
-          
-          if [ $elapsed -ge $timeout ]; then
-            echo "❌ Extralit server failed to start within ${timeout}s"
-            echo "Container logs:"
-            docker logs extralit-container
-            exit 1
-          fi
+          while ! curl -XGET http://localhost:6900/api/_status; do sleep 5; done
+          echo "✅ Services are ready!"
 
       - name: Run HTTP health check
         run: |
           echo "Running health check..."
           
           # Test the status endpoint
-          response=$(docker exec extralit-container curl -s -w "%{http_code}" http://127.0.0.1:6900/api/v1/status)
+          response=$(docker exec extralit-container curl -s -w "%{http_code}" http://localhost:6900/api/v1/status)
           http_code="${response: -3}"
           response_body="${response%???}"
-          
-          echo "HTTP Status Code: $http_code"
-          echo "Response Body: $response_body"
           
           # Check if HTTP status is 200
           if [ "$http_code" != "200" ]; then
@@ -110,7 +87,7 @@ jobs:
           echo "Testing workspace functionality..."
           
           # Check if my_workspace is accessible or created
-          workspace_response=$(docker exec extralit-container curl -s -w "%{http_code}" http://127.0.0.1:6900/api/v1/workspaces || echo "000")
+          workspace_response=$(docker exec extralit-container curl -s -w "%{http_code}" http://localhost:6900/api/v1/workspaces || echo "000")
           workspace_http_code="${workspace_response: -3}"
           workspace_body="${workspace_response%???}"
           
