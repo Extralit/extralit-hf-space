@@ -52,7 +52,7 @@ COPY config/elasticsearch.yml /etc/elasticsearch/elasticsearch.yml
 # Install Python deps and clean up build dependencies
 RUN pip install --no-cache-dir /packages && \
     chmod +x /home/extralit/start.sh /home/extralit/Procfile && \
-    apt-get remove -y gnupg && \
+    apt-get remove -y wget gnupg && \
     apt-get autoremove -y && \
     rm -rf /packages
 
