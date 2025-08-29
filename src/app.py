@@ -62,21 +62,19 @@ async def info():
         "pymupdf4llm_version": getattr(pymupdf4llm, "__version__", "unknown"),
     }
 
-def get_document_margins(document_id: UUID) -> tuple[int, int, int, int]:
-    """Fetch margins from document metadata in database."""
-    default_margins = (0, 50, 0, 30)
-
+def get_document_margins(document_id: UUID) -> tuple[int, int, int, int] | None:
+    """Fetch margins from document metadata in database. Returns None if not found."""
     if not HAS_EXTRALIT_SERVER:
-        LOGGER.info(f"Extralit server not available, using default margins for {document_id}")
-        return default_margins
+        LOGGER.info(f"Extralit server not available, no document margins for {document_id}")
+        return None
 
     try:
         with SyncSessionLocal() as session:
             document = session.query(Document).filter(Document.id == document_id).first()
 
             if not document or not document.metadata_:
-                LOGGER.info(f"No metadata found for document {document_id}, using default margins")
-                return default_margins
+                LOGGER.info(f"No metadata found for document {document_id}")
+                return None
 
             analysis_metadata = document.metadata_.get("analysis_metadata", {})
             layout_analysis = analysis_metadata.get("layout_analysis", {})
@@ -85,10 +83,16 @@ def get_document_margins(document_id: UUID) -> tuple[int, int, int, int]:
             if margin_analysis and "estimated_margins" in margin_analysis:
                 estimated_margins = margin_analysis["estimated_margins"]
 
-                left = estimated_margins.get("left_px", 0)
-                top = estimated_margins.get("top_px", 50)
-                right = estimated_margins.get("right_px", 0)
-                bottom = estimated_margins.get("bottom_px", 30)
+                # Convert pixels to PDF points (1 PDF point = 1.33 pixels approximately)
+                pixel_to_point = 0.75
+                if all(key in estimated_margins for key in ["left_px", "top_px", "right_px", "bottom_px"]):
+                    left = int(estimated_margins["left_px"] * pixel_to_point)
+                    top = int(estimated_margins["top_px"] * pixel_to_point)
+                    right = int(estimated_margins["right_px"] * pixel_to_point)
+                    bottom = int(estimated_margins["bottom_px"] * pixel_to_point)
+                else:
+                    LOGGER.info(f"Incomplete margin data for document {document_id}")
+                    return None
 
                 margins = (left, top, right, bottom)
                 LOGGER.info(f"Using document-specific margins for {document_id}: {margins}")
@@ -97,14 +101,13 @@ def get_document_margins(document_id: UUID) -> tuple[int, int, int, int]:
     except Exception as e:
         LOGGER.warning(f"Error retrieving margins for document {document_id}: {e}")
 
-    LOGGER.info(f"Using default margins for document {document_id}: {default_margins}")
-    return default_margins
+    return None
 
 @app.post("/extract")
 async def extract(pdf: UploadFile) -> JSONResponse:
     try:
-        data = await pdf.read()
-        markdown, metadata = extract_markdown_with_hierarchy(data, pdf.filename or "document.pdf")
+        file_bytes = await pdf.read()
+        markdown, metadata = extract_markdown_with_hierarchy(file_bytes, pdf.filename or "document.pdf")
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
@@ -125,10 +128,10 @@ async def extract_with_document(
     pdf: UploadFile
 ) -> JSONResponse:
     try:
-        data = await pdf.read()
+        file_bytes = await pdf.read()
         margins = get_document_margins(document_id)
-        config = ExtractionConfig(margins=margins)
-        markdown, metadata = extract_markdown_with_hierarchy(data, pdf.filename or "document.pdf", config=config)
+        config = ExtractionConfig(margins=margins) if margins else None
+        markdown, metadata = extract_markdown_with_hierarchy(file_bytes, pdf.filename or "document.pdf", config=config)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
@@ -140,6 +143,6 @@ async def extract_with_document(
             "markdown": markdown,
             "metadata": metadata,
             "filename": pdf.filename,
-            "margins_used": list(margins),
+            "margins_used": list(margins) if margins else None,
         }
     )
