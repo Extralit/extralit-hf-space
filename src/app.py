@@ -7,15 +7,25 @@ import hashlib
 import logging
 from pathlib import Path
 from typing import Optional, Tuple
+from uuid import UUID
 
 import pymupdf4llm
-from fastapi import FastAPI, UploadFile, HTTPException, Request, Body
+from fastapi import FastAPI, UploadFile, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import PlainTextResponse
 from .extract import extract_markdown_with_hierarchy, ExtractionConfig
+
+# Import document metadata classes
+try:
+    from extralit_server.api.schemas.v1.document.metadata import LayoutAnalysisMetadata
+    from extralit_server.database import SyncSessionLocal
+    from extralit_server.models.database import Document
+    HAS_EXTRALIT_SERVER = True
+except ImportError:
+    HAS_EXTRALIT_SERVER = False
 
 
 _LOG_LEVEL = "DEBUG" if os.getenv("PDF_ENABLE_LOG_DEBUG", "0") == "1" else "INFO"
@@ -52,11 +62,43 @@ async def info():
         "pymupdf4llm_version": getattr(pymupdf4llm, "__version__", "unknown"),
     }
 
-class DocumentMargins(BaseModel):
-    left: int = 0
-    top: int = 50
-    right: int = 0
-    bottom: int = 30
+def get_document_margins(document_id: UUID) -> tuple[int, int, int, int]:
+    """Fetch margins from document metadata in database."""
+    default_margins = (0, 50, 0, 30)
+
+    if not HAS_EXTRALIT_SERVER:
+        LOGGER.info(f"Extralit server not available, using default margins for {document_id}")
+        return default_margins
+
+    try:
+        with SyncSessionLocal() as session:
+            document = session.query(Document).filter(Document.id == document_id).first()
+
+            if not document or not document.metadata_:
+                LOGGER.info(f"No metadata found for document {document_id}, using default margins")
+                return default_margins
+
+            analysis_metadata = document.metadata_.get("analysis_metadata", {})
+            layout_analysis = analysis_metadata.get("layout_analysis", {})
+            margin_analysis = layout_analysis.get("margin_analysis", {})
+
+            if margin_analysis and "estimated_margins" in margin_analysis:
+                estimated_margins = margin_analysis["estimated_margins"]
+
+                left = estimated_margins.get("left_px", 0)
+                top = estimated_margins.get("top_px", 50)
+                right = estimated_margins.get("right_px", 0)
+                bottom = estimated_margins.get("bottom_px", 30)
+
+                margins = (left, top, right, bottom)
+                LOGGER.info(f"Using document-specific margins for {document_id}: {margins}")
+                return margins
+
+    except Exception as e:
+        LOGGER.warning(f"Error retrieving margins for document {document_id}: {e}")
+
+    LOGGER.info(f"Using default margins for document {document_id}: {default_margins}")
+    return default_margins
 
 @app.post("/extract")
 async def extract(pdf: UploadFile) -> JSONResponse:
@@ -77,14 +119,15 @@ async def extract(pdf: UploadFile) -> JSONResponse:
         }
     )
 
-@app.post("/extract_with_margins")
-async def extract_with_margins(
-    pdf: UploadFile,
-    margins: DocumentMargins = Body(...)
+@app.post("/extract_with_document/{document_id}")
+async def extract_with_document(
+    document_id: UUID,
+    pdf: UploadFile
 ) -> JSONResponse:
     try:
         data = await pdf.read()
-        config = ExtractionConfig(margins=(margins.left, margins.top, margins.right, margins.bottom))
+        margins = get_document_margins(document_id)
+        config = ExtractionConfig(margins=margins)
         markdown, metadata = extract_markdown_with_hierarchy(data, pdf.filename or "document.pdf", config=config)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
@@ -97,6 +140,6 @@ async def extract_with_margins(
             "markdown": markdown,
             "metadata": metadata,
             "filename": pdf.filename,
-            "margins_used": [margins.left, margins.top, margins.right, margins.bottom],
+            "margins_used": list(margins),
         }
     )
