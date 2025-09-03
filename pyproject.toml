@@ -84,6 +84,7 @@ ignore = [
     "B904",   # exception chaining (will phase in later)
     "UP007",  # | union syntax modernization
     "UP045",  # Optional[...] -> X | None modernization
+    "UP017",  # datetime.timezone.utc -> datetime.UTC
     "B027",   # empty abstract method not marked abstract
     "B024",   # abstract base class without abstract methods
     "B017",   # broad exception asserts in tests

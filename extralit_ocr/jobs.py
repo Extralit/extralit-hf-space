@@ -4,7 +4,7 @@ RQ job for PDF extraction using PyMuPDF with S3 integration.
 
 import logging
 import time
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -39,13 +39,16 @@ def pymupdf_to_markdown_job(
         Dictionary with extraction results
     """
     current_job = get_current_job()
+    if current_job is None:
+        raise Exception("No current job found")
+
     current_job.meta.update(
         {
             "document_id": str(document_id),
             "filename": filename,
             "workspace_name": workspace_name,
             "workflow_step": "pymupdf_extraction",
-            "started_at": datetime.now(UTC).isoformat(),
+            "started_at": datetime.now(timezone.utc).isoformat(),
         }
     )
     current_job.save_meta()
@@ -85,7 +88,7 @@ def pymupdf_to_markdown_job(
                 metadata.text_extraction_metadata = TextExtractionMetadata(
                     markdown=markdown,
                     extraction_method="pymupdf4llm",
-                    text_extraction_completed_at=datetime.now(UTC).isoformat(),
+                    text_extraction_completed_at=datetime.now(timezone.utc).isoformat(),
                 )
 
                 document.metadata_ = metadata.model_dump()
@@ -93,7 +96,7 @@ def pymupdf_to_markdown_job(
                 _LOGGER.info(f"Updated document {document_id} metadata with extraction results")
 
         current_job.meta.update(
-            {"completed_at": datetime.now(UTC).isoformat(), "success": True, "text_length": len(markdown)}
+            {"completed_at": datetime.now(timezone.utc).isoformat(), "success": True, "text_length": len(markdown)}
         )
         current_job.save_meta()
 
@@ -101,6 +104,8 @@ def pymupdf_to_markdown_job(
 
     except Exception as e:
         _LOGGER.error(f"Error in PyMuPDF extraction for document {document_id}: {e}")
-        current_job.meta.update({"completed_at": datetime.now(UTC).isoformat(), "success": False, "error": str(e)})
+        current_job.meta.update(
+            {"completed_at": datetime.now(timezone.utc).isoformat(), "success": False, "error": str(e)}
+        )
         current_job.save_meta()
         raise
