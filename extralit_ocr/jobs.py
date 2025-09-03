@@ -14,7 +14,7 @@ from rq.decorators import job
 from extralit_ocr.extract import extract_markdown_with_hierarchy
 from extralit_server.api.schemas.v1.document.metadata import DocumentProcessingMetadata
 from extralit_server.contexts.files import download_file_content, get_minio_client
-from extralit_server.database import SyncSessionLocal
+from extralit_server.database import AsyncSessionLocal
 from extralit_server.jobs.queues import OCR_QUEUE, REDIS_CONNECTION
 from extralit_server.models.database import Document
 
@@ -22,7 +22,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 @job(queue=OCR_QUEUE, connection=REDIS_CONNECTION, timeout=900, result_ttl=3600)
-def pymupdf_to_markdown_job(
+async def pymupdf_to_markdown_job(
     document_id: UUID, s3_url: str, filename: str, analysis_metadata: dict[str, Any], workspace_name: str
 ) -> dict[str, Any]:
     """
@@ -77,8 +77,8 @@ def pymupdf_to_markdown_job(
         }
 
         # Step 4: Update document metadata in database
-        with SyncSessionLocal() as db:
-            document = db.get(Document, document_id)
+        async with AsyncSessionLocal() as db:
+            document = await db.get(Document, document_id)
             if document and document.metadata_:
                 metadata = DocumentProcessingMetadata(**document.metadata_)
 
@@ -88,24 +88,19 @@ def pymupdf_to_markdown_job(
                 metadata.text_extraction_metadata = TextExtractionMetadata(
                     markdown=markdown,
                     extraction_method="pymupdf4llm",
-                    text_extraction_completed_at=datetime.now(timezone.utc).isoformat(),
                 )
 
                 document.metadata_ = metadata.model_dump()
-                db.commit()
+                await db.commit()
                 _LOGGER.info(f"Updated document {document_id} metadata with extraction results")
 
-        current_job.meta.update(
-            {"completed_at": datetime.now(timezone.utc).isoformat(), "success": True, "text_length": len(markdown)}
-        )
+        current_job.meta.update({"success": True, "text_length": len(markdown)})
         current_job.save_meta()
 
         return result
 
     except Exception as e:
         _LOGGER.error(f"Error in PyMuPDF extraction for document {document_id}: {e}")
-        current_job.meta.update(
-            {"completed_at": datetime.now(timezone.utc).isoformat(), "success": False, "error": str(e)}
-        )
+        current_job.meta.update({"success": False, "error": str(e)})
         current_job.save_meta()
         raise
