@@ -13,7 +13,7 @@ from rq.decorators import job
 
 from extralit_ocr.extract import extract_markdown_with_hierarchy
 from extralit_server.api.schemas.v1.document.metadata import DocumentProcessingMetadata
-from extralit_server.contexts.files import download_file_content, get_minio_client
+from extralit_server.contexts.files import download_file_content, get_s3_client
 from extralit_server.database import AsyncSessionLocal
 from extralit_server.jobs.queues import OCR_QUEUE, REDIS_CONNECTION
 from extralit_server.models.database import Document
@@ -55,11 +55,11 @@ async def pymupdf_to_markdown_job(
 
     try:
         # Step 1: Download PDF from S3
-        client = get_minio_client()
+        client = await get_s3_client()
         if client is None:
             raise Exception("Failed to get storage client")
 
-        pdf_data = download_file_content(client, s3_url)
+        pdf_data = await download_file_content(client, s3_url)
         _LOGGER.info(f"Downloaded PDF from S3: {s3_url} ({len(pdf_data)} bytes)")
 
         # Step 2: Extract markdown using PyMuPDF
