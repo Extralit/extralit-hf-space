@@ -1,7 +1,0 @@
-fastapi
-uvicorn[standard]
-pymupdf4llm
-rq
-redis
-httpx
-honcho

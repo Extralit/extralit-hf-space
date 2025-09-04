@@ -1,126 +1,175 @@
-# HF-Space Microservice
+# Extralit HuggingFace Space
 
-A standalone microservice providing PDF text extraction via PyMuPDF (AGPL-3.0) and an RQ worker for asynchronous processing.  
-This service is designed to live in its own container/repository so that your main `extralit/extralit-server` codebase can remain under Apache-2.0, avoiding direct linkage to AGPL-licensed code.
+[![Deploy to Spaces](https://huggingface.co/datasets/huggingface/badges/raw/main/deploy-to-spaces-lg.svg)](https://huggingface.co/spaces/extralit/public-demo?duplicate=true)
 
-## Features
+A complete, self-contained Extralit deployment bundle designed for easy deployment on **HuggingFace Spaces**. This package includes everything needed to run Extralit with PDF text extraction capabilities, including bundled Elasticsearch, Redis, and PyMuPDF-powered OCR processing.
 
-- FastAPI HTTP endpoint (`POST /extract`) to upload a PDF and receive extracted plain text.
-- RQ worker listening on the `pymupdf` Redis queue for background extraction jobs.
-- Bundled Elasticsearch (8.x) and Redis servers for local development and easy deployment.
-- Honcho/Procfile to orchestrate web server + worker in a single container.
-- All AGPL-licensed logic (PyMuPDF) is fully isolated here.
+## 🚀 Quick Deploy on HuggingFace Spaces
 
-## Requirements
+**The recommended way to get started with Extralit** - get up and running in under 5 minutes without maintaining servers or running commands.
 
-- Docker & Docker Buildx (for multi-arch builds)
-- Redis server (if running outside Docker)
-- Elasticsearch 8.x (if running outside Docker)
-- Python 3.11+
+### One-Click Deployment
 
-## Repository Layout
+Click the "Deploy to Spaces" button above to create your own Extralit instance. You can use the default values, but for persistent data, you'll need to configure:
 
-```
-hf-space/
-├─ app.py                  # FastAPI service for PDF extraction
-├─ worker.py               # RQ worker entrypoint (queue: pymupdf)
-├─ requirements.txt        # Python dependencies
-├─ Dockerfile              # Builds container with FastAPI, worker, Redis & ES
-├─ Procfile                # Defines `web` and `worker` processes for Honcho
-├─ scripts/
-│   └─ start.sh            # Honcho startup wrapper
-└─ config/
-    └─ elasticsearch.yml   # Elasticsearch configuration
-```
+#### Required for Data Persistence
+- **Persistent Storage**: Set to `SMALL` (otherwise data is lost on Space restart)
+- **Database**: `EXTRALIT_DATABASE_URL` - PostgreSQL connection string
+- **File Storage**: S3-compatible storage credentials:
+  - `S3_ENDPOINT`
+  - `S3_ACCESS_KEY`
+  - `S3_SECRET_KEY`
 
-## Installation & Local Development
+#### OAuth Configuration
+- `OAUTH2_HUGGINGFACE_CLIENT_ID`
+- `OAUTH2_HUGGINGFACE_CLIENT_SECRET`
 
-1. Clone the repo:
-   ```bash
-   git clone <your-url>/hf-space.git
-   cd hf-space
-   ```
-2. Create a Python virtualenv and install dependencies:
-   ```bash
-   python3.11 -m venv .venv
-   source .venv/bin/activate
-   pip install --upgrade pip
-   pip install -r requirements.txt
-   ```
-3. Start Redis and Elasticsearch (e.g. via Docker Compose or local binaries):
-   ```bash
-   docker run -d --name redis -p 6379:6379 redis:7
-   docker run -d --name elasticsearch -p 9200:9200 -e "discovery.type=single-node" elasticsearch:8.17.0
-   ```
-4. Launch the API and worker (in separate terminals):
-   ```bash
-   # Terminal 1 — API
-   uvicorn src.app:app --host 0.0.0.0 --port 80
+Leave `ADMIN_USERNAME` and `ADMIN_PASSWORD` empty - you'll sign in with your HF account as the Space owner.
 
-   # Terminal 2 — Worker
-   python worker.py
-   ```
+### Deploy with Python SDK
 
-## Docker Build & Run
-
-Build the container (multi-arch):
-```bash
-docker buildx build \
-  --platform linux/amd64,linux/arm64 \
-  -t extralit/extralit-hf-spaces:<tag> \
-  .
-```
-
-Run the container:
-```bash
-docker run -d \
-  --name hf-space \
-  -e REDIS_URL=redis://host.docker.internal:6379/0 \
-  -e ELASTICSEARCH_HOST=http://host.docker.internal:9200 \
-  -p 80:80 \
-  extralit/extralit-hf-spaces:<tag>
-```
-
-## Configuration / Environment Variables
-
-- `REDIS_URL`  
-  URL for Redis (default: `redis://redis:6379/0`).
-- `ELASTICSEARCH_HOST`  
-  Elasticsearch HTTP endpoint (default baked into container).
-- `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `OAUTH_SCOPES`  
-  If deploying on HuggingFace Spaces for HF-OAuth integration.
-- `USERNAME`, `PASSWORD`, `API_KEY`  
-  HF Space owner credentials (used by `start.sh`).
-
-## HTTP API
-
-POST `/extract`
-
-- Request: multipart/form-data with field `pdf` (application/pdf).  
-- Response: JSON `{ "text": "<full extracted text>" }`.
-
-Example:
-```bash
-curl -X POST http://localhost:80/extract \
-  -F "pdf=@/path/to/sample.pdf" \
-  -H "Content-Type: multipart/form-data"
-```
-
-## RQ Worker
-
-Enqueue jobs in your Extralit server:
+Alternatively, deploy programmatically:
 
 ```python
-from extralit_server.jobs.pymupdf_jobs import extract_text_remote
+import extralit as ex
 
-# file_bytes = open("doc.pdf","rb").read()
-job = extract_text_remote.delay(file_bytes, document_id="1234")
-# job.result -> returns extracted text when complete
+# Automatically creates and configures your HF Space
+authenticated_client = ex.Extralit.deploy_on_spaces(
+    api_key="your_hf_token"
+)
 ```
 
-Redis queue name: `pymupdf`
+This method automatically:
+- Creates a Space at `https://<your-username>-extralit.hf.space`
+- Sets up OAuth authentication
+- Creates a default workspace
+- Returns an authenticated client ready to use
 
-## License
+## 📦 What's Bundled
 
-This repository and container are licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).  
-All AGPL-licensed code (PyMuPDF) remains fully contained here. Your main `extralit/extralit-server` codebase remains Apache-2.0.
+This HF Space package includes a complete Extralit stack:
+
+- **Extralit Server**: Full annotation and dataset management platform
+- **PDF Text Extraction**: PyMuPDF-powered hierarchical markdown extraction
+- **Search & Analytics**: Elasticsearch 8.x for full-text search
+- **Background Processing**: Redis + RQ workers for async tasks
+- **Authentication**: HuggingFace OAuth integration
+
+### Architecture
+
+```
+extralit-hf-space/
+├── extralit_ocr/           # PDF extraction service
+│   ├── extract.py          # PyMuPDF markdown extraction
+│   ├── jobs.py             # RQ worker jobs
+│   └── schemas.py          # API schemas
+├── Dockerfile              # Multi-service container
+├── Procfile                # Process orchestration
+├── scripts/start.sh        # HF Space startup script
+└── config/
+    └── elasticsearch.yml   # Elasticsearch configuration
+```
+
+## 🔧 Configuration
+
+### Environment Variables
+
+The Space automatically configures itself, but you can customize:
+
+#### HuggingFace Integration
+- `OAUTH2_HUGGINGFACE_CLIENT_ID` - HF OAuth app ID
+- `OAUTH2_HUGGINGFACE_CLIENT_SECRET` - HF OAuth secret
+- `OAUTH2_HUGGINGFACE_SCOPE` - OAuth permissions
+
+#### Data Persistence
+- `EXTRALIT_DATABASE_URL` - PostgreSQL connection string
+- `S3_ENDPOINT` - S3-compatible storage endpoint
+- `S3_ACCESS_KEY` - Storage access key
+- `S3_SECRET_KEY` - Storage secret key
+
+#### Processing
+- `PDF_MARKDOWN_WRITE_DIR` - Directory for extracted markdown files
+- `PDF_MARKDOWN_WRITE_MODE` - `overwrite` or `skip` existing files
+
+## 📖 Using Your Extralit Space
+
+### Sign In
+
+1. Navigate to your Space URL: `https://<username>-extralit.hf.space`
+2. Click **"Sign in with Hugging Face"**
+3. Authorize the application - you'll be logged in as the Space owner
+
+### Create Your First Dataset
+
+**Import from Hugging Face Hub:**
+1. In the Home page, click "Import dataset from Hugging Face"
+2. Choose a sample dataset or enter a repo ID (e.g., `stanfordnlp/imdb`)
+3. Configure fields and questions as needed
+4. Give your dataset a name and start importing
+
+**Using the Python SDK:**
+
+```python
+import extralit as ex
+
+# Connect to your Space
+client = ex.client(
+    api_url="https://<username>-extralit.hf.space",
+    api_key="your_api_key"  # Found in My Settings
+)
+
+# Verify connection
+print(client.me)
+
+# Create a dataset
+dataset = client.datasets.create(
+    name="my_dataset",
+    schema=my_schema
+)
+```
+
+### PDF Processing
+
+The bundled OCR service automatically processes PDF uploads:
+
+- **Hierarchical Extraction**: Uses PyMuPDF to extract structured markdown
+- **Header Detection**: Automatically identifies document structure
+- **Background Processing**: Large files processed asynchronously via RQ workers
+
+## 🔄 Export & Sync
+
+Export your annotated datasets back to the Hub:
+
+```python
+# Load your dataset
+dataset = client.datasets(name="my_dataset")
+
+# Export to HuggingFace Hub
+dataset.to_hub(repo_id="username/my-annotated-dataset")
+```
+
+## 🐳 Local Development
+
+For local development or custom deployments:
+
+```bash
+# Clone this repository
+git clone https://github.com/extralit/extralit-hf-space.git
+cd extralit-hf-space
+
+# Build the container
+docker build -t extralit-hf-space .
+
+# Run with docker-compose or standalone
+docker run -p 80:80 extralit-hf-space
+```
+
+## 🔗 Next Steps
+
+- **Learn More**: [Extralit Documentation](https://docs.extralit.ai/latest/getting_started/quickstart/)
+- **Tutorials**: [Hands-on Examples](https://docs.extralit.ai/latest/tutorials/)
+- **Advanced Setup**: [HF Spaces Configuration Guide](https://docs.extralit.ai/latest/getting_started/how-to-configure-argilla-on-huggingface/)
+
+## 📄 License
+
+This repository is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0) due to the inclusion of PyMuPDF. The AGPL-licensed components are fully isolated in this package, allowing the main Extralit server to remain Apache-2.0 licensed.

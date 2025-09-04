@@ -1,28 +1,3 @@
-"""
-Extraction utilities for converting PDF bytes into hierarchical Markdown using PyMuPDF
-(via pymupdf4llm). Designed to be independent from any specific web framework so it
-can be reused by FastAPI endpoints, RQ workers, or other orchestrators.
-
-Typical usage:
-
-    from .extract import extract_markdown_with_hierarchy, ExtractionConfig
-
-    markdown, meta = extract_markdown_with_hierarchy(pdf_bytes, "input.pdf")
-
-You can customize behavior with an `ExtractionConfig` instance:
-
-    cfg = ExtractionConfig(write_dir="~/out/md", write_mode="overwrite")
-    markdown, meta = extract_markdown_with_hierarchy(pdf_bytes, "input.pdf", config=cfg)
-
-Environment Variables (applied to the default config if not explicitly overridden):
-    PDF_MARKDOWN_WRITE_DIR        - Directory to write extracted Markdown (disabled if unset)
-    PDF_MARKDOWN_WRITE_MODE       - One of: overwrite | skip  (default: overwrite)
-    PDF_ACCEPT_CONTENT_TYPES      - Not used here (API layer concern)
-    PDF_MAX_BYTES                 - Not enforced here (API / caller concern)
-
-The module purposely avoids importing FastAPI to remain side-effect free for worker usage.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -31,13 +6,12 @@ import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Sequence, Tuple, Dict, Any
+from typing import Any, Optional
 
 import fitz  # PyMuPDF
 import pymupdf4llm
 
-
-LOGGER = logging.getLogger("pdf-markdown-extract")
+LOGGER = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -46,25 +20,9 @@ LOGGER = logging.getLogger("pdf-markdown-extract")
 
 @dataclass
 class ExtractionConfig:
-    """
-    Configuration controlling markdown extraction and optional persistence.
-
-    Attributes:
-        write_dir: Optional path (string or Path) to write extracted markdown files.
-                   If None, writing is disabled.
-        write_mode: 'overwrite' or 'skip'. When 'skip', existing files with the
-                    same generated name are not rewritten.
-        margins: 4-tuple (left, top, right, bottom) in PDF points passed to
-                 pymupdf4llm.to_markdown to trim headers / footers.
-        header_detection_max_levels: Max header levels for IdentifyHeaders heuristic.
-        header_detection_body_limit: Body limit for IdentifyHeaders (heuristic tuning).
-        safe_filename_timestamp: If True, include unix timestamp in generated filename.
-        safe_filename_hash_len: Number of hex chars from sha1(original_name) to include.
-    """
-
     write_dir: Optional[Path | str] = None
     write_mode: str = "overwrite"  # or "skip"
-    margins: Tuple[int, int, int, int] = (0, 50, 0, 30)
+    margins: tuple[int, int, int, int] = (0, 50, 0, 30)
     header_detection_max_levels: int = 4
     header_detection_body_limit: int = 10
     safe_filename_timestamp: bool = True
@@ -96,11 +54,6 @@ def _default_config_from_env() -> ExtractionConfig:
 _DEFAULT_CONFIG = _default_config_from_env()
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _safe_filename(
     original_name: str,
     include_timestamp: bool = True,
@@ -108,7 +61,7 @@ def _safe_filename(
     suffix: str = ".md",
 ) -> str:
     """
-    Produce a safe filename for storage – includes truncated stem, optional hash + timestamp.
+    Produce a safe filename for storage - includes truncated stem, optional hash + timestamp.
     """
     stem = Path(original_name).stem[:80] or "document"
     parts = [stem]
@@ -154,17 +107,12 @@ def _write_markdown_if_configured(
     return str(out_path)
 
 
-# ---------------------------------------------------------------------------
-# Core Extraction
-# ---------------------------------------------------------------------------
-
-
 def extract_markdown_with_hierarchy(
     file_bytes: bytes,
     original_filename: str,
     *,
     config: Optional[ExtractionConfig] = None,
-) -> Tuple[str, Dict[str, Any]]:
+) -> tuple[str, dict[str, Any]]:
     """
     Extract hierarchical Markdown from a PDF (bytes) using either the embedded
     Table of Contents (TOC) or a heuristic header identification fallback.
@@ -223,7 +171,7 @@ def extract_markdown_with_hierarchy(
 
     write_path = _write_markdown_if_configured(md_text, original_filename, cfg)
 
-    metadata: Dict[str, Any] = {
+    metadata: dict[str, Any] = {
         "pages": doc.page_count,
         "toc_entries": toc_entry_count,
         "headers_strategy": headers_strategy,
@@ -244,15 +192,36 @@ def extract_markdown_with_hierarchy(
 # Convenience / Public API
 # ---------------------------------------------------------------------------
 
-def get_default_config() -> ExtractionConfig:
-    """
-    Return the process-wide default ExtractionConfig (derived from environment).
-    """
-    return _DEFAULT_CONFIG
+
+def should_extract_text(filename: str, file_metadata: dict[str, Any]) -> bool:
+    """Determine if text extraction should be performed for a file."""
+    if not filename.lower().endswith(".pdf"):
+        return False
+
+    if file_metadata.get("text_extracted", False):
+        return False
+
+    return True
 
 
-__all__ = [
-    "ExtractionConfig",
-    "extract_markdown_with_hierarchy",
-    "get_default_config",
-]
+def create_extraction_config(
+    analysis_metadata: Optional[dict[str, Any]] = None, custom_config: Optional[dict[str, Any]] = None
+) -> dict[str, Any]:
+    """Create extraction configuration based on analysis metadata."""
+    config = {}
+
+    if analysis_metadata:
+        if "margins" in analysis_metadata:
+            margins = analysis_metadata["margins"]
+            if isinstance(margins, dict) and all(k in margins for k in ["left", "top", "right", "bottom"]):
+                config["margins"] = (margins["left"], margins["top"], margins["right"], margins["bottom"])
+
+        if analysis_metadata.get("has_headers"):
+            config["header_detection_max_levels"] = 6
+        else:
+            config["header_detection_max_levels"] = 3
+
+    if custom_config:
+        config.update(custom_config)
+
+    return config

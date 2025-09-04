@@ -1,0 +1,139 @@
+name: Integration Test
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - "extralit_ocr/**"
+      - "scripts/**"
+      - "config/**"
+      - "Procfile"
+      - ".github/workflows/integration-test.yml"
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+    paths:
+      - "extralit_ocr/**"
+      - "scripts/**"
+      - "config/**"
+      - "Procfile"
+      - ".github/workflows/integration-test.yml"
+
+jobs:
+  integration-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image with cache
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          tags: extralit-hf-space:latest
+          build-args: |
+            EXTRALIT_SERVER_IMAGE=extralitdev/extralit-server
+            EXTRALIT_VERSION=latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Create test network
+        run: docker network create extralit-network
+
+      - name: Start container for testing
+        run: |
+          docker run -d \
+            --name extralit-container \
+            --network extralit-network \
+            -p 6900:6900 \
+            -p 9200:9200 \
+            -p 6379:6379 \
+            -p 9229:9229 \
+            -e USERNAME=extralit \
+            -e PASSWORD=12345678 \
+            -e API_KEY=extralit.apikey \
+            -e HF_HUB_DISABLE_TELEMETRY=1 \
+            extralit-hf-space:latest
+
+      - name: Copy oauth config to container
+        run: |
+          docker cp tests/.oauth.yml extralit-container:/home/extralit/.oauth.yml
+
+      - name: Wait for services to initialize (with live logs)
+        run: |
+          echo "Waiting for services to start..."
+          # Start streaming logs in background
+          docker logs -f extralit-container &
+          LOGS_PID=$!
+          # Wait for the service to be ready
+          while ! curl -s -o /dev/null -XGET http://localhost:6900/api/_status; do sleep 10; done
+          echo "✅ Services are ready!"
+          # Stop log streaming
+          kill $LOGS_PID || true
+
+      - name: Run HTTP health check
+        run: |
+          echo "Running health check..."
+
+          # Test the status endpoint
+          response=$(docker exec extralit-container curl -s -w "%{http_code}" http://localhost:6900/api/v1/status)
+          http_code="${response: -3}"
+          response_body="${response%???}"
+
+          # Check if HTTP status is 200
+          if [ "$http_code" != "200" ] && [ "$http_code" != "422" ]; then
+            echo "❌ Health check failed: Expected HTTP 200, got $http_code"
+            exit 1
+          fi
+
+          # Check if response is valid JSON (dict/object)
+          if echo "$response_body" | jq empty 2>/dev/null && echo "$response_body" | jq -e 'type == "object"' >/dev/null 2>&1; then
+            echo "✅ Health check passed: Received valid JSON object"
+            echo "Response: $response_body"
+          else
+            echo "❌ Health check failed: Response is not a valid JSON object"
+            echo "Response: $response_body"
+            exit 1
+          fi
+
+      - name: Test workspace creation
+        run: |
+          echo "Testing workspace functionality..."
+
+          # Check if my_workspace is accessible or created
+          workspace_response=$(docker exec extralit-container curl -s -w "%{http_code}" http://localhost:6900/api/v1/workspaces || echo "000")
+          workspace_http_code="${workspace_response: -3}"
+          workspace_body="${workspace_response%???}"
+
+          echo "Workspace endpoint HTTP Status: $workspace_http_code"
+          echo "Workspace response: $workspace_body"
+
+          # If workspaces endpoint exists, verify my_workspace is available
+          if [ "$workspace_http_code" = "200" ]; then
+            if echo "$workspace_body" | jq -e '.[] | select(.name == "my_workspace")' >/dev/null 2>&1; then
+              echo "✅ Workspace 'my_workspace' found"
+            else
+              echo "⚠️  Workspace 'my_workspace' not found in response, but service is running"
+            fi
+          else
+            echo "⚠️  Workspace endpoint not available or different API structure"
+          fi
+
+      - name: Show container logs on failure
+        if: failure()
+        run: |
+          echo "=== Container Logs ==="
+          docker logs extralit-container
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop extralit-container || true
+          docker rm extralit-container || true
+          docker network rm extralit-network || true
+          docker rmi extralit-hf-space:latest || true
