@@ -16,36 +16,29 @@
 
 import asyncio
 import logging
-from typing import Any, Optional, Tuple
+from typing import Any, Optional
 from uuid import UUID
 
+from extralit_server.jobs.queues import OCR_QUEUE, REDIS_CONNECTION
 from rq import get_current_job
+from rq.decorators import job
 
-from ..extract import extract_markdown_with_hierarchy, ExtractionConfig
+from extralit_ocr.extract import ExtractionConfig, extract_markdown_with_hierarchy
 
 _LOGGER = logging.getLogger(__name__)
 
-# Try to import database components for margin fetching
-try:
-    from extralit_server.contexts import files
-    from extralit_server.database import SyncSessionLocal
-    from extralit_server.models.database import Document
-    HAS_EXTRALIT_SERVER = True
-except ImportError:
-    HAS_EXTRALIT_SERVER = False
-    _LOGGER.warning("Extralit server components not available, using default margins")
+from extralit_server.contexts import files
+from extralit_server.database import SyncSessionLocal
+from extralit_server.models.database import Document
 
 
-def _get_document_margins(document_id: UUID) -> Optional[Tuple[int, int, int, int]]:
+def _get_document_margins(document_id: UUID) -> Optional[tuple[int, int, int, int]]:
     """
     Fetch margins from document metadata in database.
 
     Returns:
         Tuple of (left, top, right, bottom) margins in PDF points, or None if not found
     """
-    if not HAS_EXTRALIT_SERVER:
-        return None
-
     try:
         with SyncSessionLocal() as session:
             document = session.query(Document).filter(Document.id == document_id).first()
@@ -90,9 +83,6 @@ def _get_document_margins(document_id: UUID) -> Optional[Tuple[int, int, int, in
 
 async def _download_file_from_s3(s3_url: str) -> bytes:
     """Download file content from S3 using existing extralit-server patterns."""
-    if not HAS_EXTRALIT_SERVER:
-        raise RuntimeError("S3 operations require extralit_server components")
-
     try:
         s3_client = await files.get_s3_client()
         return await files.download_file_content(s3_client, s3_url)
@@ -100,6 +90,7 @@ async def _download_file_from_s3(s3_url: str) -> bytes:
         raise RuntimeError(f"Failed to download file from S3: {e}")
 
 
+@job(queue=OCR_QUEUE, connection=REDIS_CONNECTION, timeout=900, result_ttl=3600)
 def pymupdf_to_markdown_job(
     document_id: UUID,
     s3_url: str,
@@ -122,12 +113,14 @@ def pymupdf_to_markdown_job(
     """
     job = get_current_job()
     if job:
-        job.meta.update({
-            "document_id": str(document_id),
-            "filename": filename,
-            "workspace_name": workspace_name,
-            "workflow_step": "pymupdf_extraction",
-        })
+        job.meta.update(
+            {
+                "document_id": str(document_id),
+                "filename": filename,
+                "workspace_name": workspace_name,
+                "workflow_step": "pymupdf_extraction",
+            }
+        )
         job.save_meta()
 
     _LOGGER.info(f"Starting PyMuPDF extraction for document {document_id}")
@@ -149,9 +142,7 @@ def pymupdf_to_markdown_job(
             _LOGGER.info("Using default margins")
 
         # Step 4: Extract markdown using PyMuPDF
-        markdown_text, extraction_metadata = extract_markdown_with_hierarchy(
-            pdf_data, filename, config=config
-        )
+        markdown_text, extraction_metadata = extract_markdown_with_hierarchy(pdf_data, filename, config=config)
 
         # Step 5: Prepare result
         result = {
@@ -169,11 +160,13 @@ def pymupdf_to_markdown_job(
         }
 
         if job:
-            job.meta.update({
-                "status": "completed",
-                "markdown_length": len(markdown_text),
-                "pages_processed": extraction_metadata.get("pages", 0),
-            })
+            job.meta.update(
+                {
+                    "status": "completed",
+                    "markdown_length": len(markdown_text),
+                    "pages_processed": extraction_metadata.get("pages", 0),
+                }
+            )
             job.save_meta()
 
         _LOGGER.info(f"Successfully extracted {len(markdown_text)} characters from document {document_id}")
@@ -184,10 +177,12 @@ def pymupdf_to_markdown_job(
         _LOGGER.error(error_msg)
 
         if job:
-            job.meta.update({
-                "status": "failed",
-                "error": str(e),
-            })
+            job.meta.update(
+                {
+                    "status": "failed",
+                    "error": str(e),
+                }
+            )
             job.save_meta()
 
         raise RuntimeError(error_msg) from e
