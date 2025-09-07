@@ -8,9 +8,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-import fitz  # PyMuPDF
+import pymupdf
 import pymupdf4llm
-from extralit_server.api.schemas.v1.document.metadata import DocumentProcessingMetadata
+from extralit_server.api.schemas.v1.document.metadata import (
+    DocumentProcessingMetadata,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -44,7 +46,7 @@ class ExtractionConfig:
         return self._write_dir_path
 
 
-def _default_config_from_env() -> ExtractionConfig:
+def create_default_config() -> ExtractionConfig:
     return ExtractionConfig(
         write_dir=os.getenv("PDF_MARKDOWN_WRITE_DIR") or None,
         write_mode=os.getenv("PDF_MARKDOWN_WRITE_MODE", "overwrite"),
@@ -52,10 +54,10 @@ def _default_config_from_env() -> ExtractionConfig:
 
 
 # Singleton default config (can be overridden per call)
-_DEFAULT_CONFIG = _default_config_from_env()
+_DEFAULT_CONFIG = create_default_config()
 
 
-def _safe_filename(
+def generate_safe_filename(
     original_name: str,
     include_timestamp: bool = True,
     hash_len: int = 8,
@@ -77,7 +79,7 @@ def _safe_filename(
     return "-".join(parts) + suffix
 
 
-def _write_markdown_if_configured(
+def write_markdown_output(
     markdown_text: str,
     original_filename: str,
     config: ExtractionConfig,
@@ -89,7 +91,7 @@ def _write_markdown_if_configured(
     if not write_dir:
         return None
 
-    out_path = write_dir / _safe_filename(
+    out_path = write_dir / generate_safe_filename(
         original_filename,
         include_timestamp=config.safe_filename_timestamp,
         hash_len=config.safe_filename_hash_len,
@@ -108,7 +110,7 @@ def _write_markdown_if_configured(
     return str(out_path)
 
 
-def _get_document_margins(metadata: DocumentProcessingMetadata) -> tuple[int, int, int, int] | None:
+def extract_document_margins(metadata: DocumentProcessingMetadata) -> tuple[int, int, int, int] | None:
     """
     Fetch margins from document metadata in database.
 
@@ -121,21 +123,21 @@ def _get_document_margins(metadata: DocumentProcessingMetadata) -> tuple[int, in
             or not metadata.analysis_metadata.layout_analysis
             or not metadata.analysis_metadata.layout_analysis.margin_analysis
         ):
-            print(f"No layout analysis or margin data found in \n{metadata}")
+            LOGGER.debug("No layout analysis or margin data found in document metadata")
             return None
 
         margin_analysis = metadata.analysis_metadata.layout_analysis.margin_analysis
-        print("margin_analysis:", margin_analysis)
+        LOGGER.debug("Found margin analysis data: %s", margin_analysis)
 
         # Convert pixels to PDF points (multiply by 0.75)
         if all(key in margin_analysis for key in ["left_px", "top_px", "right_px", "bottom_px"]):
-            left = int(margin_analysis["left_px"] * 0.75)
-            top = int(margin_analysis["top_px"] * 0.75)
-            right = int(margin_analysis["right_px"] * 0.75)
-            bottom = int(margin_analysis["bottom_px"] * 0.75)
+            left = int(margin_analysis["left_px"])
+            top = int(margin_analysis["top_px"])
+            right = int(margin_analysis["right_px"])
+            bottom = int(margin_analysis["bottom_px"])
 
             margins = (left, top, right, bottom)
-            print(f"Using document-specific margins: {margins}")
+            LOGGER.info("Using document-specific margins: %s", margins)
             return margins
 
     except Exception as e:
@@ -171,7 +173,7 @@ def extract_markdown_with_hierarchy(
     cfg = config or _DEFAULT_CONFIG
 
     try:
-        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        doc = pymupdf.open(stream=file_bytes)
     except Exception as e:  # pragma: no cover - external library specifics
         raise ValueError(f"Failed to open PDF: {e}") from e
 
@@ -206,7 +208,7 @@ def extract_markdown_with_hierarchy(
     except Exception as e:  # pragma: no cover - external library specifics
         raise ValueError(f"Markdown conversion failed: {e}") from e
 
-    write_path = _write_markdown_if_configured(md_text, original_filename, cfg)
+    write_path = write_markdown_output(md_text, original_filename, cfg)
 
     metadata: dict[str, Any] = {
         "pages": doc.page_count,
@@ -235,30 +237,4 @@ def should_extract_text(filename: str, file_metadata: dict[str, Any]) -> bool:
     if not filename.lower().endswith(".pdf"):
         return False
 
-    if file_metadata.get("text_extracted", False):
-        return False
-
-    return True
-
-
-def create_extraction_config(
-    analysis_metadata: Optional[dict[str, Any]] = None, custom_config: Optional[dict[str, Any]] = None
-) -> dict[str, Any]:
-    """Create extraction configuration based on analysis metadata."""
-    config = {}
-
-    if analysis_metadata:
-        if "margins" in analysis_metadata:
-            margins = analysis_metadata["margins"]
-            if isinstance(margins, dict) and all(k in margins for k in ["left", "top", "right", "bottom"]):
-                config["margins"] = (margins["left"], margins["top"], margins["right"], margins["bottom"])
-
-        if analysis_metadata.get("has_headers"):
-            config["header_detection_max_levels"] = 6
-        else:
-            config["header_detection_max_levels"] = 3
-
-    if custom_config:
-        config.update(custom_config)
-
-    return config
+    return not file_metadata.get("text_extracted", False)

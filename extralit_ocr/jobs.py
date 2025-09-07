@@ -16,7 +16,7 @@ from extralit_server.models.database import Document
 from rq import get_current_job
 from rq.decorators import job
 
-from extralit_ocr.extract import ExtractionConfig, _get_document_margins, extract_markdown_with_hierarchy
+from extralit_ocr.extract import ExtractionConfig, extract_document_margins, extract_markdown_with_hierarchy
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ async def pymupdf_to_markdown_job(
             else:
                 metadata = DocumentProcessingMetadata()
 
-            margins = _get_document_margins(metadata)
+            margins = extract_document_margins(metadata)
             if margins:
                 config = ExtractionConfig(margins=margins)
             else:
