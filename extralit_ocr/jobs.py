@@ -21,7 +21,7 @@ from extralit_ocr.extract import ExtractionConfig, extract_markdown_with_hierarc
 _LOGGER = logging.getLogger(__name__)
 
 
-def _get_document_margins(document: Document) -> tuple[int, int, int, int] | None:
+def _get_document_margins(metadata: DocumentProcessingMetadata) -> tuple[int, int, int, int] | None:
     """
     Fetch margins from document metadata in database.
 
@@ -29,18 +29,12 @@ def _get_document_margins(document: Document) -> tuple[int, int, int, int] | Non
         Tuple of (left, top, right, bottom) margins in PDF points, or None if not found
     """
     try:
-        if not document or not document.metadata_:
-            print(f"No metadata found for document {document.reference}")
-            return None
-
-        metadata = DocumentProcessingMetadata(**document.metadata_)
-
         if (
             not metadata.analysis_metadata
             or not metadata.analysis_metadata.layout_analysis
             or not metadata.analysis_metadata.layout_analysis.margin_analysis
         ):
-            print(f"No layout analysis or margin data found for document {document.reference}")
+            print(f"No layout analysis or margin data found in \n{metadata}")
             return None
 
         margin_analysis = metadata.analysis_metadata.layout_analysis.margin_analysis
@@ -54,11 +48,11 @@ def _get_document_margins(document: Document) -> tuple[int, int, int, int] | Non
             bottom = int(margin_analysis["bottom_px"] * 0.75)
 
             margins = (left, top, right, bottom)
-            print(f"Using document-specific margins for {document.reference}: {margins}")
+            print(f"Using document-specific margins: {margins}")
             return margins
 
     except Exception as e:
-        _LOGGER.warning(f"Error retrieving margins for document {document.reference}: {e}", exc_info=True)
+        _LOGGER.warning(f"Error retrieving margins for document: {e}", exc_info=True)
 
     return None
 
@@ -108,7 +102,12 @@ async def pymupdf_to_markdown_job(
             if document is None:
                 raise Exception(f"Document with ID {document_id} not found in database")
 
-            margins = _get_document_margins(document)
+            if document and document.metadata_:
+                metadata = DocumentProcessingMetadata(**document.metadata_)
+            else:
+                metadata = DocumentProcessingMetadata()
+
+            margins = _get_document_margins(metadata)
             if margins:
                 config = ExtractionConfig(margins=margins)
             else:
@@ -130,18 +129,14 @@ async def pymupdf_to_markdown_job(
             }
 
             # Step 4: Update document metadata in database
-            if document and document.metadata_:
-                metadata = DocumentProcessingMetadata(**document.metadata_)
+            metadata.text_extraction_metadata = TextExtractionMetadata(
+                markdown=markdown,
+                extraction_method="pymupdf4llm",
+            )
 
-                # Add text extraction metadata
-                metadata.text_extraction_metadata = TextExtractionMetadata(
-                    markdown=markdown,
-                    extraction_method="pymupdf4llm",
-                )
-
-                document.metadata_ = metadata.model_dump()
-                await db.commit()
-                _LOGGER.info(f"Updated document {document_id} metadata with extraction results")
+            document.metadata_ = metadata.model_dump()
+            await db.commit()
+            _LOGGER.info(f"Updated document {document_id} metadata with extraction results")
 
         current_job.meta.update({"success": True, "text_length": len(markdown)})
         current_job.save_meta()
