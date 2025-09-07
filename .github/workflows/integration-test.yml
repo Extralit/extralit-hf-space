@@ -57,6 +57,9 @@ jobs:
             -e USERNAME=extralit \
             -e PASSWORD=12345678 \
             -e API_KEY=extralit.apikey \
+            -e EXTRALIT_S3_ENDPOINT=http://localhost:9000 \
+            -e EXTRALIT_S3_ACCESS_KEY=minioadmin \
+            -e EXTRALIT_S3_SECRET_KEY=minioadmin \
             -e HF_HUB_DISABLE_TELEMETRY=1 \
             extralit-hf-space:latest
 

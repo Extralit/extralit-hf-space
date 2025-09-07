@@ -10,13 +10,11 @@ license = {text = "AGPL-3.0-or-later"}
 requires-python = ">=3.10"
 packages = ["extralit_ocr"]
 dependencies = [
-    "fastapi",
-    "uvicorn[standard]",
-    "pymupdf4llm",
     "rq",
     "redis",
     "httpx",
     "honcho",
+    "pymupdf4llm",
 ]
 
 [project.optional-dependencies]
