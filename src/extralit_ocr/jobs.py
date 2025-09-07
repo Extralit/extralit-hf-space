@@ -14,25 +14,25 @@
 
 """RQ jobs for PyMuPDF processing with document-specific margin support."""
 
-import asyncio
 import logging
 from typing import Any, Optional
 from uuid import UUID
 
-from extralit_server.jobs.queues import OCR_QUEUE, REDIS_CONNECTION
 from rq import get_current_job
 from rq.decorators import job
 
 from extralit_ocr.extract import ExtractionConfig, extract_markdown_with_hierarchy
+from extralit_server.api.schemas.v1.document.metadata import DocumentProcessingMetadata
+from extralit_server.jobs.queues import OCR_QUEUE, REDIS_CONNECTION
 
 _LOGGER = logging.getLogger(__name__)
 
 from extralit_server.contexts import files
-from extralit_server.database import SyncSessionLocal
+from extralit_server.database import AsyncSessionLocal
 from extralit_server.models.database import Document
 
 
-def _get_document_margins(document_id: UUID) -> Optional[tuple[int, int, int, int]]:
+async def _get_document_margins(document_id: UUID) -> Optional[tuple[int, int, int, int]]:
     """
     Fetch margins from document metadata in database.
 
@@ -40,58 +40,45 @@ def _get_document_margins(document_id: UUID) -> Optional[tuple[int, int, int, in
         Tuple of (left, top, right, bottom) margins in PDF points, or None if not found
     """
     try:
-        with SyncSessionLocal() as session:
-            document = session.query(Document).filter(Document.id == document_id).first()
+        async with AsyncSessionLocal() as db:
+            document = await db.get(Document, document_id)
 
             if not document or not document.metadata_:
-                _LOGGER.info(f"No metadata found for document {document_id}")
+                print(f"No metadata found for document {document_id}")
                 return None
 
-            metadata = document.metadata_
-            if isinstance(metadata, dict):
-                analysis_metadata = metadata.get("analysis_metadata", {})
-            else:
-                analysis_metadata = getattr(metadata, "analysis_metadata", {}) or {}
+            metadata = DocumentProcessingMetadata(**document.metadata_)
 
-            if isinstance(analysis_metadata, dict):
-                layout_analysis = analysis_metadata.get("layout_analysis", {})
-            else:
-                layout_analysis = getattr(analysis_metadata, "layout_analysis", {}) or {}
+            if (
+                not metadata.analysis_metadata
+                or not metadata.analysis_metadata.layout_analysis
+                or not metadata.analysis_metadata.layout_analysis.margin_analysis
+            ):
+                print(f"No layout analysis or margin data found for document {document_id}")
+                return None
 
-            # Check for estimated_margins directly in layout_analysis (correct structure)
-            if isinstance(layout_analysis, dict) and "estimated_margins" in layout_analysis:
-                estimated_margins = layout_analysis["estimated_margins"]
+            margin_analysis = metadata.analysis_metadata.layout_analysis.margin_analysis
+            print("margin_analysis:", margin_analysis)
 
-                # Convert pixels to PDF points (multiply by 0.75)
-                if all(key in estimated_margins for key in ["left_px", "top_px", "right_px", "bottom_px"]):
-                    left = int(estimated_margins["left_px"] * 0.75)
-                    top = int(estimated_margins["top_px"] * 0.75)
-                    right = int(estimated_margins["right_px"] * 0.75)
-                    bottom = int(estimated_margins["bottom_px"] * 0.75)
+            # Convert pixels to PDF points (multiply by 0.75)
+            if all(key in margin_analysis for key in ["left_px", "top_px", "right_px", "bottom_px"]):
+                left = int(margin_analysis["left_px"] * 0.75)
+                top = int(margin_analysis["top_px"] * 0.75)
+                right = int(margin_analysis["right_px"] * 0.75)
+                bottom = int(margin_analysis["bottom_px"] * 0.75)
 
-                    margins = (left, top, right, bottom)
-                    _LOGGER.info(f"Using document-specific margins for {document_id}: {margins}")
-                    return margins
-                else:
-                    _LOGGER.info(f"Incomplete margin data for document {document_id}")
+                margins = (left, top, right, bottom)
+                print(f"Using document-specific margins for {document.reference}: {margins}")
+                return margins
 
     except Exception as e:
-        _LOGGER.warning(f"Error retrieving margins for document {document_id}: {e}")
+        _LOGGER.warning(f"Error retrieving margins for document {document_id}: {e}", exc_info=True)
 
     return None
 
 
-async def _download_file_from_s3(s3_url: str) -> bytes:
-    """Download file content from S3 using existing extralit-server patterns."""
-    try:
-        s3_client = await files.get_s3_client()
-        return await files.download_file_content(s3_client, s3_url)
-    except Exception as e:
-        raise RuntimeError(f"Failed to download file from S3: {e}")
-
-
 @job(queue=OCR_QUEUE, connection=REDIS_CONNECTION, timeout=900, result_ttl=3600)
-def pymupdf_to_markdown_job(
+async def pymupdf_to_markdown_job(
     document_id: UUID,
     s3_url: str,
     filename: str,
@@ -123,23 +110,20 @@ def pymupdf_to_markdown_job(
         )
         job.save_meta()
 
-    _LOGGER.info(f"Starting PyMuPDF extraction for document {document_id}")
-
     try:
         # Step 1: Download PDF from S3
-        pdf_data = asyncio.run(_download_file_from_s3(s3_url))
+        s3_client = await files.get_s3_client()
+        pdf_data = await files.download_file_content(s3_client, s3_url)
 
         # Step 2: Get document-specific margins
-        margins = _get_document_margins(document_id)
+        margins = await _get_document_margins(document_id)
 
         # Step 3: Create extraction config with margins
         if margins:
             config = ExtractionConfig(margins=margins)
-            _LOGGER.info(f"Using document-specific margins: {margins}")
         else:
             # Use default margins if none found
             config = ExtractionConfig()
-            _LOGGER.info("Using default margins")
 
         # Step 4: Extract markdown using PyMuPDF
         markdown_text, extraction_metadata = extract_markdown_with_hierarchy(pdf_data, filename, config=config)
