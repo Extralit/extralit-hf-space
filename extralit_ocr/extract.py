@@ -10,6 +10,7 @@ from typing import Any, Optional
 
 import fitz  # PyMuPDF
 import pymupdf4llm
+from extralit_server.api.schemas.v1.document.metadata import DocumentProcessingMetadata
 
 LOGGER = logging.getLogger(__name__)
 
@@ -105,6 +106,42 @@ def _write_markdown_if_configured(
         len(markdown_text),
     )
     return str(out_path)
+
+
+def _get_document_margins(metadata: DocumentProcessingMetadata) -> tuple[int, int, int, int] | None:
+    """
+    Fetch margins from document metadata in database.
+
+    Returns:
+        Tuple of (left, top, right, bottom) margins in PDF points, or None if not found
+    """
+    try:
+        if (
+            not metadata.analysis_metadata
+            or not metadata.analysis_metadata.layout_analysis
+            or not metadata.analysis_metadata.layout_analysis.margin_analysis
+        ):
+            print(f"No layout analysis or margin data found in \n{metadata}")
+            return None
+
+        margin_analysis = metadata.analysis_metadata.layout_analysis.margin_analysis
+        print("margin_analysis:", margin_analysis)
+
+        # Convert pixels to PDF points (multiply by 0.75)
+        if all(key in margin_analysis for key in ["left_px", "top_px", "right_px", "bottom_px"]):
+            left = int(margin_analysis["left_px"] * 0.75)
+            top = int(margin_analysis["top_px"] * 0.75)
+            right = int(margin_analysis["right_px"] * 0.75)
+            bottom = int(margin_analysis["bottom_px"] * 0.75)
+
+            margins = (left, top, right, bottom)
+            print(f"Using document-specific margins: {margins}")
+            return margins
+
+    except Exception as e:
+        LOGGER.warning(f"Error retrieving margins for document: {e}", exc_info=True)
+
+    return None
 
 
 def extract_markdown_with_hierarchy(
