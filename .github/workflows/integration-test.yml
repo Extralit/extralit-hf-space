@@ -68,7 +68,7 @@ jobs:
           docker cp tests/.oauth.yml extralit-container:/home/extralit/.oauth.yml
 
       - name: Wait for services to initialize (with live logs)
-        timeout-minutes: 2
+        timeout-minutes: 3
         run: |
           echo "Waiting for services to start..."
           # Start streaming logs in background
