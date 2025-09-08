@@ -68,13 +68,14 @@ jobs:
           docker cp tests/.oauth.yml extralit-container:/home/extralit/.oauth.yml
 
       - name: Wait for services to initialize (with live logs)
+        timeout-minutes: 2
         run: |
           echo "Waiting for services to start..."
           # Start streaming logs in background
           docker logs -f extralit-container &
           LOGS_PID=$!
           # Wait for the service to be ready
-          while ! curl -s -o /dev/null -XGET http://localhost:6900/api/_status; do sleep 10; done
+          while ! curl -s -o /dev/null -XGET http://localhost:6900/api/v1/status; do sleep 10; done
           echo "✅ Services are ready!"
           # Stop log streaming
           kill $LOGS_PID || true
