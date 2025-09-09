@@ -99,6 +99,6 @@ jobs:
         with:
           username: ${{ env.DOCKER_USERNAME }}
           password: ${{ env.DOCKER_PASSWORD }}
-          repository: $${{ env.REPO }}
+          repository: ${{ env.REPO }}
           readme-filepath: README.md
 
