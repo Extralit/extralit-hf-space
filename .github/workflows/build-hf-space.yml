@@ -38,7 +38,7 @@ jobs:
             echo "EXTRALIT_SERVER_IMAGE=extralitdev/extralit-server" >> $GITHUB_ENV
             echo "DOCKER_USERNAME=${{ secrets.AR_DOCKER_USERNAME_DEV }}" >> $GITHUB_ENV
             echo "DOCKER_PASSWORD=${{ secrets.AR_DOCKER_PASSWORD_DEV }}" >> $GITHUB_ENV
-            echo "TAG_LATEST=false" >> $GITHUB_ENV
+            echo "TAG_LATEST=true" >> $GITHUB_ENV
           elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]] && [[ "${{ github.ref_name }}" == "main" ]]; then
             echo "PLATFORMS=linux/amd64" >> $GITHUB_ENV
             echo "REPO=extralit/extralit-hf-space" >> $GITHUB_ENV
