@@ -82,6 +82,11 @@ jobs:
           username: ${{ env.DOCKER_USERNAME }}
           password: ${{ env.DOCKER_PASSWORD }}
 
+      - name: Test EXTRALIT_SERVER_IMAGE
+        run: |
+          echo "Testing ${{ env.EXTRALIT_SERVER_IMAGE }}:${{ env.IMAGE_TAG }}"
+          docker run --rm ${{ env.EXTRALIT_SERVER_IMAGE }}:${{ env.IMAGE_TAG }} python -m extralit_server start --help
+
       - name: Build & push extralit-hf-space Docker image
         uses: docker/build-push-action@v5
         with:
