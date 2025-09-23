@@ -13,8 +13,8 @@ dependencies = [
     "rq",
     "redis",
     "httpx",
-    "honcho",
-    "pymupdf4llm",
+    "honcho~=2.0.0",
+    "pymupdf4llm~=0.0.27",
 ]
 
 [project.optional-dependencies]

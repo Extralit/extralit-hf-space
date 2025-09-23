@@ -1,6 +1,6 @@
 # Multi‐stage build to reduce image size
 ARG EXTRALIT_VERSION=latest
-ARG EXTRALIT_SERVER_IMAGE=extralit/extralit-server
+ARG EXTRALIT_SERVER_IMAGE=extralitdev/extralit-server
 
 # Base stage with common dependencies from Extralit server
 FROM ${EXTRALIT_SERVER_IMAGE}:${EXTRALIT_VERSION} AS base
