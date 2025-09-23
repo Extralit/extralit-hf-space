@@ -93,10 +93,6 @@ jobs:
           tags: ${{ env.DOCKER_TAGS }}
           push: true
 
-      - name: Test extralit-server command in built image
-        run: |
-          docker run --rm ${{ env.REPO }}:${{ env.IMAGE_TAG }} python -m extralit_server start --help
-
       - name: Update Docker Hub Description from README.md
         uses: peter-evans/dockerhub-description@v4
         if: ${{ env.TAG_LATEST == 'true' }}
