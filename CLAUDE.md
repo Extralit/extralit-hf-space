@@ -76,13 +76,6 @@ extralit: sleep 30; /bin/bash start_extralit_server.sh
 - `OAUTH2_HUGGINGFACE_CLIENT_ID` - HF OAuth app ID
 - `OAUTH2_HUGGINGFACE_CLIENT_SECRET` - HF OAuth secret
 
-### Development vs Production
-
-**Local Development (`extralit-server/`):**
-```bash
-pdm run server-dev        # Server + worker + auto-reload
-pdm run worker           # Background workers only
-```
 
 **HF Spaces Production (`extralit-hf-space/`):**
 ```bash

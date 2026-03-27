@@ -1,6 +1,6 @@
 [build-system]
-requires = ["pdm-backend"]
-build-backend = "pdm.backend"
+requires = ["hatchling>=1.18.0"]
+build-backend = "hatchling.build"
 
 [project]
 name = "extralit-hf-space"
@@ -8,7 +8,6 @@ version = "0.1.0"
 description = "Extralit HuggingFace Space with Elasticsearch and Redis"
 license = {text = "AGPL-3.0-or-later"}
 requires-python = ">=3.10"
-packages = ["extralit_ocr"]
 dependencies = [
     "rq",
     "redis",
@@ -17,22 +16,13 @@ dependencies = [
     "pymupdf4llm~=0.0.27",
 ]
 
-[project.optional-dependencies]
+[tool.hatch.build.targets.wheel]
+packages = ["extralit_ocr"]
+
+[dependency-groups]
 dev = [
     "ruff",
     "rq-dashboard",
-]
-
-[tool.pdm]
-package-dir = "extralit_ocr"
-
-[tool.pdm.build]
-includes = ["extralit_ocr/"]
-package-data = {"extralit_ocr" = ["*"]}
-
-[tool.uv]
-dev-dependencies = [
-    "ruff",
 ]
 
 [tool.ruff]
