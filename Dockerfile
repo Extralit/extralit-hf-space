@@ -67,7 +67,7 @@ ENV EXTRALIT_HOME_PATH=/data/extralit
 ENV REINDEX_DATASETS=1
 
 # Expose the HTTP port for FastAPI & Elastic
-EXPOSE 80 9200 6379
+EXPOSE 6900 9200 6379
 
 # Start all services via Honcho/Procfile
 CMD ["/bin/bash", "start.sh"]
