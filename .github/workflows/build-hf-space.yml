@@ -7,68 +7,99 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  resolve-env:
     runs-on: ubuntu-latest
+    outputs:
+      env_name: ${{ steps.resolve.outputs.env_name }}
+      image_tag: ${{ steps.resolve.outputs.image_tag }}
+      tag_latest: ${{ steps.resolve.outputs.tag_latest }}
+      platforms: ${{ steps.resolve.outputs.platforms }}
+    steps:
+      - name: Resolve environment, tag, and platforms
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          PAYLOAD_TAG: ${{ github.event.client_payload.tag }}
+          PAYLOAD_BRANCH: ${{ github.event.client_payload.branch }}
+          PAYLOAD_IS_RELEASE: ${{ github.event.client_payload.is_release }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            BRANCH="$REF_NAME"
+            IMAGE_TAG="latest"
+            case "$BRANCH" in
+              main)    TAG_LATEST="false" ;;
+              develop) TAG_LATEST="true"  ;;
+              *)
+                echo "::error::workflow_dispatch only supported on main or develop (got: $BRANCH)"
+                exit 1
+                ;;
+            esac
+          elif [[ "$EVENT_NAME" == "repository_dispatch" ]]; then
+            IMAGE_TAG="$PAYLOAD_TAG"
+            TAG_LATEST="true"
+            if [[ -n "$PAYLOAD_BRANCH" ]]; then
+              BRANCH="$PAYLOAD_BRANCH"
+            elif [[ "$PAYLOAD_IS_RELEASE" == "true" ]]; then
+              BRANCH="main"
+            else
+              BRANCH="develop"
+            fi
+          else
+            echo "::error::Unsupported event: $EVENT_NAME"
+            exit 1
+          fi
+
+          case "$BRANCH" in
+            main)
+              ENV_NAME="main"
+              if [[ "$EVENT_NAME" == "repository_dispatch" ]]; then
+                PLATFORMS="linux/amd64,linux/arm64"
+              else
+                PLATFORMS="linux/amd64"
+              fi
+              ;;
+            develop)
+              ENV_NAME="develop"
+              PLATFORMS="linux/amd64"
+              ;;
+            *)
+              echo "::error::Unsupported branch: $BRANCH"
+              exit 1
+              ;;
+          esac
+
+          echo "Resolved: env=$ENV_NAME branch=$BRANCH tag=$IMAGE_TAG tag_latest=$TAG_LATEST platforms=$PLATFORMS"
+          {
+            echo "env_name=$ENV_NAME"
+            echo "image_tag=$IMAGE_TAG"
+            echo "tag_latest=$TAG_LATEST"
+            echo "platforms=$PLATFORMS"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve-env
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-env.outputs.env_name }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Determine IMAGE_TAG
-        id: determine_tag
-        run: |
-          if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
-            TAG="${{ github.event.client_payload.tag }}"
-          else
-            TAG="latest"
-          fi
-          echo "IMAGE_TAG=$TAG" >> $GITHUB_ENV
-      - name: Set variables based on release flag
-        run: |
-          if [[ "${{ github.event_name }}" == "repository_dispatch" ]] && [[ "${{ github.event.client_payload.is_release }}" == "true" ]]; then
-            echo "PLATFORMS=linux/amd64,linux/arm64" >> $GITHUB_ENV
-            echo "REPO=extralit/extralit-hf-space" >> $GITHUB_ENV
-            echo "EXTRALIT_SERVER_IMAGE=extralit/extralit-server" >> $GITHUB_ENV
-            echo "DOCKER_USERNAME=${{ secrets.AR_DOCKER_USERNAME }}" >> $GITHUB_ENV
-            echo "DOCKER_PASSWORD=${{ secrets.AR_DOCKER_PASSWORD }}" >> $GITHUB_ENV
-            echo "TAG_LATEST=true" >> $GITHUB_ENV
-          elif [[ "${{ github.event_name }}" == "repository_dispatch" ]] && [[ "${{ github.event.client_payload.is_release }}" != "true" ]]; then
-            echo "PLATFORMS=linux/amd64" >> $GITHUB_ENV
-            echo "REPO=extralitdev/extralit-hf-space" >> $GITHUB_ENV
-            echo "EXTRALIT_SERVER_IMAGE=extralitdev/extralit-server" >> $GITHUB_ENV
-            echo "DOCKER_USERNAME=${{ secrets.AR_DOCKER_USERNAME_DEV }}" >> $GITHUB_ENV
-            echo "DOCKER_PASSWORD=${{ secrets.AR_DOCKER_PASSWORD_DEV }}" >> $GITHUB_ENV
-            echo "TAG_LATEST=true" >> $GITHUB_ENV
-          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]] && [[ "${{ github.ref_name }}" == "main" ]]; then
-            echo "PLATFORMS=linux/amd64" >> $GITHUB_ENV
-            echo "REPO=extralit/extralit-hf-space" >> $GITHUB_ENV
-            echo "EXTRALIT_SERVER_IMAGE=extralit/extralit-server" >> $GITHUB_ENV
-            echo "DOCKER_USERNAME=${{ secrets.AR_DOCKER_USERNAME }}" >> $GITHUB_ENV
-            echo "DOCKER_PASSWORD=${{ secrets.AR_DOCKER_PASSWORD }}" >> $GITHUB_ENV
-            echo "TAG_LATEST=false" >> $GITHUB_ENV
-          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]] && [[ "${{ github.ref_name }}" == "develop" ]]; then
-            echo "PLATFORMS=linux/amd64" >> $GITHUB_ENV
-            echo "REPO=extralitdev/extralit-hf-space" >> $GITHUB_ENV
-            echo "EXTRALIT_SERVER_IMAGE=extralitdev/extralit-server" >> $GITHUB_ENV
-            echo "DOCKER_USERNAME=${{ secrets.AR_DOCKER_USERNAME_DEV }}" >> $GITHUB_ENV
-            echo "DOCKER_PASSWORD=${{ secrets.AR_DOCKER_PASSWORD_DEV }}" >> $GITHUB_ENV
-            echo "TAG_LATEST=true" >> $GITHUB_ENV
-          else
-            echo "SKIP_BUILD=true" >> $GITHUB_ENV
-            echo "No matching event/branch criteria. Skipping build." >> $GITHUB_ENV
-          fi
-
-      - name: Skip build (no matching criteria)
-        if: env.SKIP_BUILD == 'true'
-        run: exit 1
-
       - name: Construct Docker tags
+        id: tags
+        env:
+          DOCKER_REPO: ${{ vars.DOCKER_REPO }}
+          IMAGE_TAG: ${{ needs.resolve-env.outputs.image_tag }}
+          TAG_LATEST: ${{ needs.resolve-env.outputs.tag_latest }}
         run: |
-          TAGS="${{ env.REPO }}:${{ env.IMAGE_TAG }}"
-          if [[ "${{ env.TAG_LATEST }}" == "true" ]]; then
-            TAGS="$TAGS,${{ env.REPO }}:latest"
+          TAGS="${DOCKER_REPO}:${IMAGE_TAG}"
+          if [[ "$TAG_LATEST" == "true" ]]; then
+            TAGS="$TAGS,${DOCKER_REPO}:latest"
           fi
-          echo "DOCKER_TAGS=$TAGS" >> $GITHUB_ENV
+          echo "DOCKER_TAGS=$TAGS" >> "$GITHUB_ENV"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -79,26 +110,36 @@ jobs:
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ env.DOCKER_USERNAME }}
-          password: ${{ env.DOCKER_PASSWORD }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Build & push extralit-hf-space Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: ${{ env.PLATFORMS }}
+          platforms: ${{ needs.resolve-env.outputs.platforms }}
           build-args: |
-            EXTRALIT_SERVER_IMAGE=${{ env.EXTRALIT_SERVER_IMAGE }}
-            EXTRALIT_VERSION=${{ env.IMAGE_TAG }}
+            EXTRALIT_SERVER_IMAGE=${{ vars.EXTRALIT_SERVER_IMAGE }}
+            EXTRALIT_VERSION=${{ needs.resolve-env.outputs.image_tag }}
           tags: ${{ env.DOCKER_TAGS }}
           push: true
 
       - name: Update Docker Hub Description from README.md
+        if: needs.resolve-env.outputs.tag_latest == 'true'
         uses: peter-evans/dockerhub-description@v4
-        if: ${{ env.TAG_LATEST == 'true' }}
         with:
-          username: ${{ env.DOCKER_USERNAME }}
-          password: ${{ env.DOCKER_PASSWORD }}
-          repository: ${{ env.REPO }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+          repository: ${{ vars.DOCKER_REPO }}
           readme-filepath: README.md
 
+      - name: Restart HF Space to pull latest image
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
+        run: |
+          echo "Restarting HF Space: $HF_SPACE_ID"
+          curl -sS -X POST \
+            "https://huggingface.co/api/spaces/${HF_SPACE_ID}/restart" \
+            -H "Authorization: Bearer $HF_TOKEN" \
+            -w "\nHTTP Status: %{http_code}\n"
