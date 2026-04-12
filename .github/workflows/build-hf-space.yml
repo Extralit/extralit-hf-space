@@ -14,6 +14,7 @@ jobs:
       image_tag: ${{ steps.resolve.outputs.image_tag }}
       tag_latest: ${{ steps.resolve.outputs.tag_latest }}
       platforms: ${{ steps.resolve.outputs.platforms }}
+      hf_space_branch: ${{ steps.resolve.outputs.hf_space_branch }}
     steps:
       - name: Resolve environment, tag, and platforms
         id: resolve
@@ -32,10 +33,7 @@ jobs:
             case "$BRANCH" in
               main)    TAG_LATEST="false" ;;
               develop) TAG_LATEST="true"  ;;
-              *)
-                echo "::error::workflow_dispatch only supported on main or develop (got: $BRANCH)"
-                exit 1
-                ;;
+              *)       TAG_LATEST="false" ;;
             esac
           elif [[ "$EVENT_NAME" == "repository_dispatch" ]]; then
             IMAGE_TAG="$PAYLOAD_TAG"
@@ -66,17 +64,25 @@ jobs:
               PLATFORMS="linux/amd64"
               ;;
             *)
-              echo "::error::Unsupported branch: $BRANCH"
-              exit 1
+              ENV_NAME="develop"
+              PLATFORMS="linux/amd64"
+              TAG_LATEST="false"
               ;;
           esac
 
-          echo "Resolved: env=$ENV_NAME branch=$BRANCH tag=$IMAGE_TAG tag_latest=$TAG_LATEST platforms=$PLATFORMS"
+          # Sanitize branch name for Docker tag and HF Space branch
+          HF_SPACE_BRANCH=""
+          if [[ "$BRANCH" != "main" && "$BRANCH" != "develop" ]]; then
+            HF_SPACE_BRANCH=$(echo "$BRANCH" | sed 's|[^a-zA-Z0-9._-]|-|g' | head -c 128)
+          fi
+
+          echo "Resolved: env=$ENV_NAME branch=$BRANCH tag=$IMAGE_TAG tag_latest=$TAG_LATEST platforms=$PLATFORMS hf_space_branch=$HF_SPACE_BRANCH"
           {
             echo "env_name=$ENV_NAME"
             echo "image_tag=$IMAGE_TAG"
             echo "tag_latest=$TAG_LATEST"
             echo "platforms=$PLATFORMS"
+            echo "hf_space_branch=$HF_SPACE_BRANCH"
           } >> "$GITHUB_OUTPUT"
 
   build:
@@ -133,13 +139,49 @@ jobs:
           repository: ${{ vars.DOCKER_REPO }}
           readme-filepath: README.md
 
-      - name: Restart HF Space to pull latest image
+      - name: Deploy to HF Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
+          HF_SPACE_BRANCH: ${{ needs.resolve-env.outputs.hf_space_branch }}
+          DOCKER_REPO: ${{ vars.DOCKER_REPO }}
+          IMAGE_TAG: ${{ needs.resolve-env.outputs.image_tag }}
         run: |
-          echo "Restarting HF Space: $HF_SPACE_ID"
-          curl -sS -X POST \
-            "https://huggingface.co/api/spaces/${HF_SPACE_ID}/restart" \
-            -H "Authorization: Bearer $HF_TOKEN" \
-            -w "\nHTTP Status: %{http_code}\n"
+          if [[ -n "$HF_SPACE_BRANCH" ]]; then
+            echo "Deploying to HF Space $HF_SPACE_ID branch: $HF_SPACE_BRANCH (image: $DOCKER_REPO:$IMAGE_TAG)"
+            pip install -q huggingface_hub
+            python - <<'PYEOF'
+          import os
+          from huggingface_hub import HfApi
+
+          api = HfApi(token=os.environ["HF_TOKEN"])
+          space_id = os.environ["HF_SPACE_ID"]
+          branch = os.environ["HF_SPACE_BRANCH"]
+          docker_repo = os.environ["DOCKER_REPO"]
+          image_tag = os.environ["IMAGE_TAG"]
+          repo_type = "space"
+
+          refs = api.list_repo_refs(space_id, repo_type=repo_type)
+          branch_names = [b.name for b in refs.branches]
+          if branch not in branch_names:
+              print(f"Creating branch '{branch}' on {space_id}")
+              api.create_branch(space_id, repo_type=repo_type, branch=branch)
+
+          dockerfile_content = f"FROM {docker_repo}:{image_tag}\n"
+          api.upload_file(
+              path_or_fileobj=dockerfile_content.encode(),
+              path_in_repo="Dockerfile",
+              repo_id=space_id,
+              repo_type=repo_type,
+              revision=branch,
+              commit_message=f"Update to {docker_repo}:{image_tag}",
+          )
+          print(f"Updated Dockerfile on branch '{branch}' -> {docker_repo}:{image_tag}")
+          PYEOF
+          else
+            echo "Restarting HF Space: $HF_SPACE_ID (default branch)"
+            curl -sS -X POST \
+              "https://huggingface.co/api/spaces/${HF_SPACE_ID}/restart" \
+              -H "Authorization: Bearer $HF_TOKEN" \
+              -w "\nHTTP Status: %{http_code}\n"
+          fi
