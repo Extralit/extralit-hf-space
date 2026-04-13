@@ -198,8 +198,11 @@ jobs:
                   hardware="cpu-basic",
               )
 
-          # Upload a Dockerfile pointing to the PR Docker image
-          dockerfile_content = f"FROM {docker_repo}:{image_tag}\n"
+          # Upload a Dockerfile matching the source Space pattern
+          dockerfile_content = (
+              f"FROM {docker_repo}:{image_tag}\n"
+              f"COPY .oauth.yaml /home/argilla/\n"
+          )
           api.upload_file(
               path_or_fileobj=dockerfile_content.encode(),
               path_in_repo="Dockerfile",
