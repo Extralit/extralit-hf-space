@@ -14,7 +14,7 @@ jobs:
       image_tag: ${{ steps.resolve.outputs.image_tag }}
       tag_latest: ${{ steps.resolve.outputs.tag_latest }}
       platforms: ${{ steps.resolve.outputs.platforms }}
-      hf_space_branch: ${{ steps.resolve.outputs.hf_space_branch }}
+      hf_space_slug: ${{ steps.resolve.outputs.hf_space_slug }}
     steps:
       - name: Resolve environment, tag, and platforms
         id: resolve
@@ -70,19 +70,24 @@ jobs:
               ;;
           esac
 
-          # Sanitize branch name for Docker tag and HF Space branch
-          HF_SPACE_BRANCH=""
+          # For non-main/develop branches, derive a PR Space slug
+          HF_SPACE_SLUG=""
           if [[ "$BRANCH" != "main" && "$BRANCH" != "develop" ]]; then
-            HF_SPACE_BRANCH=$(echo "$BRANCH" | sed 's|[^a-zA-Z0-9._-]|-|g' | head -c 128)
+            # Extract PR number if present (e.g. "201/merge" -> "pr-201"), otherwise use sanitized branch
+            if [[ "$BRANCH" =~ ^([0-9]+)/merge$ ]]; then
+              HF_SPACE_SLUG="pr-${BASH_REMATCH[1]}"
+            else
+              HF_SPACE_SLUG=$(echo "$BRANCH" | sed 's|[^a-zA-Z0-9-]|-|g' | head -c 50)
+            fi
           fi
 
-          echo "Resolved: env=$ENV_NAME branch=$BRANCH tag=$IMAGE_TAG tag_latest=$TAG_LATEST platforms=$PLATFORMS hf_space_branch=$HF_SPACE_BRANCH"
+          echo "Resolved: env=$ENV_NAME branch=$BRANCH tag=$IMAGE_TAG tag_latest=$TAG_LATEST platforms=$PLATFORMS hf_space_slug=$HF_SPACE_SLUG"
           {
             echo "env_name=$ENV_NAME"
             echo "image_tag=$IMAGE_TAG"
             echo "tag_latest=$TAG_LATEST"
             echo "platforms=$PLATFORMS"
-            echo "hf_space_branch=$HF_SPACE_BRANCH"
+            echo "hf_space_slug=$HF_SPACE_SLUG"
           } >> "$GITHUB_OUTPUT"
 
   build:
@@ -139,49 +144,64 @@ jobs:
           repository: ${{ vars.DOCKER_REPO }}
           readme-filepath: README.md
 
-      - name: Deploy to HF Space
+      - name: Restart HF Space
+        if: needs.resolve-env.outputs.hf_space_slug == ''
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
-          HF_SPACE_BRANCH: ${{ needs.resolve-env.outputs.hf_space_branch }}
+        run: |
+          echo "Restarting HF Space: $HF_SPACE_ID"
+          curl -sS -X POST \
+            "https://huggingface.co/api/spaces/${HF_SPACE_ID}/restart" \
+            -H "Authorization: Bearer $HF_TOKEN" \
+            -w "\nHTTP Status: %{http_code}\n"
+
+  deploy-pr-space:
+    needs: [resolve-env, build]
+    if: needs.resolve-env.outputs.hf_space_slug != ''
+    runs-on: ubuntu-latest
+    # No environment — uses repo-level secrets for HF_TOKEN
+    steps:
+      - name: Deploy PR Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_SLUG: ${{ needs.resolve-env.outputs.hf_space_slug }}
           DOCKER_REPO: ${{ vars.DOCKER_REPO }}
           IMAGE_TAG: ${{ needs.resolve-env.outputs.image_tag }}
+          SOURCE_SPACE: extralit-dev/public-demo
         run: |
-          if [[ -n "$HF_SPACE_BRANCH" ]]; then
-            echo "Deploying to HF Space $HF_SPACE_ID branch: $HF_SPACE_BRANCH (image: $DOCKER_REPO:$IMAGE_TAG)"
-            pip install -q huggingface_hub
-            python - <<'PYEOF'
+          echo "Deploying PR Space: $HF_SPACE_SLUG (image: $DOCKER_REPO:$IMAGE_TAG)"
+          pip install -q huggingface_hub
+          python - <<'PYEOF'
           import os
           from huggingface_hub import HfApi
 
           api = HfApi(token=os.environ["HF_TOKEN"])
-          space_id = os.environ["HF_SPACE_ID"]
-          branch = os.environ["HF_SPACE_BRANCH"]
+          source_space = os.environ["SOURCE_SPACE"]
+          slug = os.environ["HF_SPACE_SLUG"]
           docker_repo = os.environ["DOCKER_REPO"]
           image_tag = os.environ["IMAGE_TAG"]
-          repo_type = "space"
 
-          refs = api.list_repo_refs(space_id, repo_type=repo_type)
-          branch_names = [b.name for b in refs.branches]
-          if branch not in branch_names:
-              print(f"Creating branch '{branch}' on {space_id}")
-              api.create_branch(space_id, repo_type=repo_type, branch=branch)
+          org = source_space.split("/")[0]
+          target_space = f"{org}/{slug}"
 
+          # Duplicate the source Space if the target doesn't exist yet
+          try:
+              api.space_info(target_space)
+              print(f"Space '{target_space}' already exists")
+          except Exception:
+              print(f"Duplicating '{source_space}' -> '{target_space}'")
+              api.duplicate_space(source_space, to_id=target_space, exist_ok=True)
+
+          # Upload a Dockerfile pointing to the PR Docker image
           dockerfile_content = f"FROM {docker_repo}:{image_tag}\n"
           api.upload_file(
               path_or_fileobj=dockerfile_content.encode(),
               path_in_repo="Dockerfile",
-              repo_id=space_id,
-              repo_type=repo_type,
-              revision=branch,
-              commit_message=f"Update to {docker_repo}:{image_tag}",
+              repo_id=target_space,
+              repo_type="space",
+              commit_message=f"Deploy {docker_repo}:{image_tag}",
           )
-          print(f"Updated Dockerfile on branch '{branch}' -> {docker_repo}:{image_tag}")
+          print(f"Deployed {target_space} -> {docker_repo}:{image_tag}")
+          print(f"URL: https://huggingface.co/spaces/{target_space}")
           PYEOF
-          else
-            echo "Restarting HF Space: $HF_SPACE_ID (default branch)"
-            curl -sS -X POST \
-              "https://huggingface.co/api/spaces/${HF_SPACE_ID}/restart" \
-              -H "Authorization: Bearer $HF_TOKEN" \
-              -w "\nHTTP Status: %{http_code}\n"
-          fi
