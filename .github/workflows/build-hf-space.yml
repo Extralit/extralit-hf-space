@@ -166,7 +166,7 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE_SLUG: ${{ needs.resolve-env.outputs.hf_space_slug }}
-          DOCKER_REPO: ${{ vars.DOCKER_REPO }}
+          DOCKER_REPO: extralitdev/extralit-hf-space
           IMAGE_TAG: ${{ needs.resolve-env.outputs.image_tag }}
           SOURCE_SPACE: extralit-dev/public-demo
         run: |
@@ -191,7 +191,12 @@ jobs:
               print(f"Space '{target_space}' already exists")
           except Exception:
               print(f"Duplicating '{source_space}' -> '{target_space}'")
-              api.duplicate_space(source_space, to_id=target_space, exist_ok=True)
+              api.duplicate_space(
+                  source_space,
+                  to_id=target_space,
+                  exist_ok=True,
+                  hardware="cpu-basic",
+              )
 
           # Upload a Dockerfile pointing to the PR Docker image
           dockerfile_content = f"FROM {docker_repo}:{image_tag}\n"
