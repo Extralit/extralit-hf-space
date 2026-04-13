@@ -201,7 +201,7 @@ jobs:
           # Upload a Dockerfile matching the source Space pattern
           dockerfile_content = (
               f"FROM {docker_repo}:{image_tag}\n"
-              f"COPY .oauth.yaml /home/argilla/\n"
+              f"COPY .oauth.yaml /home/extralit/\n"
           )
           api.upload_file(
               path_or_fileobj=dockerfile_content.encode(),
