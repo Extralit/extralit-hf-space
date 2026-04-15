@@ -1,4 +1,4 @@
-name: Build extralit-hf-space Image
+name: Build & Deploy HF Space
 
 on:
   repository_dispatch:
@@ -14,9 +14,9 @@ jobs:
       image_tag: ${{ steps.resolve.outputs.image_tag }}
       tag_latest: ${{ steps.resolve.outputs.tag_latest }}
       platforms: ${{ steps.resolve.outputs.platforms }}
-      hf_space_slug: ${{ steps.resolve.outputs.hf_space_slug }}
+      pr_space_slug: ${{ steps.resolve.outputs.pr_space_slug }}
     steps:
-      - name: Resolve environment, tag, and platforms
+      - name: Resolve build parameters
         id: resolve
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -27,21 +27,17 @@ jobs:
         run: |
           set -euo pipefail
 
+          TAG_LATEST="false"
+
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
             BRANCH="$REF_NAME"
             IMAGE_TAG="latest"
-            case "$BRANCH" in
-              main)    TAG_LATEST="false" ;;
-              develop) TAG_LATEST="true"  ;;
-              *)       TAG_LATEST="false" ;;
-            esac
           elif [[ "$EVENT_NAME" == "repository_dispatch" ]]; then
             IMAGE_TAG="$PAYLOAD_TAG"
-            TAG_LATEST="true"
-            if [[ -n "$PAYLOAD_BRANCH" ]]; then
-              BRANCH="$PAYLOAD_BRANCH"
-            elif [[ "$PAYLOAD_IS_RELEASE" == "true" ]]; then
+            if [[ "$PAYLOAD_IS_RELEASE" == "true" ]]; then
               BRANCH="main"
+            elif [[ -n "$PAYLOAD_BRANCH" ]]; then
+              BRANCH="$PAYLOAD_BRANCH"
             else
               BRANCH="develop"
             fi
@@ -54,6 +50,7 @@ jobs:
             main)
               ENV_NAME="main"
               if [[ "$EVENT_NAME" == "repository_dispatch" ]]; then
+                TAG_LATEST="true"
                 PLATFORMS="linux/amd64,linux/arm64"
               else
                 PLATFORMS="linux/amd64"
@@ -61,46 +58,42 @@ jobs:
               ;;
             develop)
               ENV_NAME="develop"
+              TAG_LATEST="true"
               PLATFORMS="linux/amd64"
               ;;
             *)
               ENV_NAME="develop"
               PLATFORMS="linux/amd64"
-              TAG_LATEST="false"
               ;;
           esac
 
-          # For non-main/develop branches, derive a PR Space slug
-          HF_SPACE_SLUG=""
+          PR_SPACE_SLUG=""
           if [[ "$BRANCH" != "main" && "$BRANCH" != "develop" ]]; then
-            # Extract PR number if present (e.g. "201/merge" -> "pr-201"), otherwise use sanitized branch
             if [[ "$BRANCH" =~ ^([0-9]+)/merge$ ]]; then
-              HF_SPACE_SLUG="pr-${BASH_REMATCH[1]}"
+              PR_SPACE_SLUG="pr-${BASH_REMATCH[1]}"
             else
-              HF_SPACE_SLUG=$(echo "$BRANCH" | sed 's|[^a-zA-Z0-9-]|-|g' | head -c 50)
+              PR_SPACE_SLUG=$(echo "$BRANCH" | sed 's|[^a-zA-Z0-9-]|-|g' | head -c 50)
             fi
           fi
 
-          echo "Resolved: env=$ENV_NAME branch=$BRANCH tag=$IMAGE_TAG tag_latest=$TAG_LATEST platforms=$PLATFORMS hf_space_slug=$HF_SPACE_SLUG"
+          echo "Resolved: env=$ENV_NAME branch=$BRANCH tag=$IMAGE_TAG tag_latest=$TAG_LATEST platforms=$PLATFORMS pr_space_slug=$PR_SPACE_SLUG"
           {
             echo "env_name=$ENV_NAME"
             echo "image_tag=$IMAGE_TAG"
             echo "tag_latest=$TAG_LATEST"
             echo "platforms=$PLATFORMS"
-            echo "hf_space_slug=$HF_SPACE_SLUG"
+            echo "pr_space_slug=$PR_SPACE_SLUG"
           } >> "$GITHUB_OUTPUT"
 
   build:
     needs: resolve-env
     runs-on: ubuntu-latest
     environment: ${{ needs.resolve-env.outputs.env_name }}
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Construct Docker tags
-        id: tags
         env:
           DOCKER_REPO: ${{ vars.DOCKER_REPO }}
           IMAGE_TAG: ${{ needs.resolve-env.outputs.image_tag }}
@@ -124,7 +117,7 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build & push extralit-hf-space Docker image
+      - name: Build & push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -135,7 +128,7 @@ jobs:
           tags: ${{ env.DOCKER_TAGS }}
           push: true
 
-      - name: Update Docker Hub Description from README.md
+      - name: Update Docker Hub description
         if: needs.resolve-env.outputs.tag_latest == 'true'
         uses: peter-evans/dockerhub-description@v4
         with:
@@ -144,8 +137,13 @@ jobs:
           repository: ${{ vars.DOCKER_REPO }}
           readme-filepath: README.md
 
+  deploy-space:
+    needs: [resolve-env, build]
+    if: needs.resolve-env.outputs.pr_space_slug == ''
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-env.outputs.env_name }}
+    steps:
       - name: Restart HF Space
-        if: needs.resolve-env.outputs.hf_space_slug == ''
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
@@ -158,58 +156,65 @@ jobs:
 
   deploy-pr-space:
     needs: [resolve-env, build]
-    if: needs.resolve-env.outputs.hf_space_slug != ''
+    if: needs.resolve-env.outputs.pr_space_slug != ''
     runs-on: ubuntu-latest
-    # No environment — uses repo-level secrets for HF_TOKEN
+    env:
+      SOURCE_SPACE: extralit-dev/develop
+      DOCKER_REPO: extralitdev/extralit-hf-space
     steps:
       - name: Deploy PR Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_SPACE_SLUG: ${{ needs.resolve-env.outputs.hf_space_slug }}
-          DOCKER_REPO: extralitdev/extralit-hf-space
+          PR_SPACE_SLUG: ${{ needs.resolve-env.outputs.pr_space_slug }}
           IMAGE_TAG: ${{ needs.resolve-env.outputs.image_tag }}
-          SOURCE_SPACE: extralit-dev/public-demo
         run: |
-          echo "Deploying PR Space: $HF_SPACE_SLUG (image: $DOCKER_REPO:$IMAGE_TAG)"
           pip install -q huggingface_hub
           python - <<'PYEOF'
           import os
           from huggingface_hub import HfApi
 
           api = HfApi(token=os.environ["HF_TOKEN"])
-          source_space = os.environ["SOURCE_SPACE"]
-          slug = os.environ["HF_SPACE_SLUG"]
+          source = os.environ["SOURCE_SPACE"]
+          org = source.split("/")[0]
+          target = f"{org}/{os.environ['PR_SPACE_SLUG']}"
           docker_repo = os.environ["DOCKER_REPO"]
           image_tag = os.environ["IMAGE_TAG"]
 
-          org = source_space.split("/")[0]
-          target_space = f"{org}/{slug}"
-
-          # Duplicate the source Space if the target doesn't exist yet
           try:
-              api.space_info(target_space)
-              print(f"Space '{target_space}' already exists")
+              api.space_info(target)
+              print(f"Space '{target}' already exists")
           except Exception:
-              print(f"Duplicating '{source_space}' -> '{target_space}'")
-              api.duplicate_space(
-                  source_space,
-                  to_id=target_space,
-                  exist_ok=True,
-                  hardware="cpu-basic",
+              print(f"Creating '{target}' from '{source}'")
+              api.duplicate_space(source, to_id=target, exist_ok=True, hardware="cpu-basic")
+              readme = (
+                  "---\n"
+                  "title: Extralit PR Preview\n"
+                  "emoji: '\U0001f4bb'\n"
+                  "colorFrom: purple\n"
+                  "colorTo: red\n"
+                  "sdk: docker\n"
+                  "app_port: 6900\n"
+                  "fullWidth: true\n"
+                  "license: apache-2.0\n"
+                  "hf_oauth: true\n"
+                  "---\n"
+              )
+              api.upload_file(
+                  path_or_fileobj=readme.encode(),
+                  path_in_repo="README.md",
+                  repo_id=target,
+                  repo_type="space",
+                  commit_message="Enable HF OAuth",
               )
 
-          # Upload a Dockerfile matching the source Space pattern
-          dockerfile_content = (
-              f"FROM {docker_repo}:{image_tag}\n"
-              f"COPY .oauth.yaml /home/extralit/\n"
-          )
+          dockerfile = f"FROM {docker_repo}:{image_tag}\n"
           api.upload_file(
-              path_or_fileobj=dockerfile_content.encode(),
+              path_or_fileobj=dockerfile.encode(),
               path_in_repo="Dockerfile",
-              repo_id=target_space,
+              repo_id=target,
               repo_type="space",
               commit_message=f"Deploy {docker_repo}:{image_tag}",
           )
-          print(f"Deployed {target_space} -> {docker_repo}:{image_tag}")
-          print(f"URL: https://huggingface.co/spaces/{target_space}")
+          print(f"Deployed {target} -> {docker_repo}:{image_tag}")
+          print(f"URL: https://huggingface.co/spaces/{target}")
           PYEOF
