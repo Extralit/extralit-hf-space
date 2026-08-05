@@ -6,7 +6,7 @@ Invoked by the ``deploy-pr-space`` job in ``.github/workflows/build-hf-space.yml
 Flow:
   1. Duplicate ``SOURCE_SPACE`` -> ``<org>/<PR_SPACE_SLUG>`` on first run (writing a
      minimal README), otherwise reuse the existing Space.
-  2. Propagate ``EXTRALIT_*`` config from the develop GitHub environment onto the Space.
+  2. Propagate ``EXTRALIT_*`` config from the ``staging`` GitHub environment onto the Space.
      ``duplicate_space`` copies files but NOT secrets/variables, so without this a PR
      Space has no DB/S3/auth config. GitHub env *secrets* -> Space secrets; *variables*
      -> Space variables. Strictly filtered to ``EXTRALIT_*`` so ``HF_TOKEN`` / ``DOCKER_*``
@@ -76,10 +76,10 @@ def main() -> None:
     space_vars = _filter_extralit(os.environ.get("ALL_VARS", ""))
 
     for key in sorted(space_secrets):
-        api.add_space_secret(repo_id=target, key=key, value=space_secrets[key], description="from CI develop env")
+        api.add_space_secret(repo_id=target, key=key, value=space_secrets[key], description="from CI staging env")
         print(f"  secret   -> {key}")
     for key in sorted(space_vars):
-        api.add_space_variable(repo_id=target, key=key, value=space_vars[key], description="from CI develop env")
+        api.add_space_variable(repo_id=target, key=key, value=space_vars[key], description="from CI staging env")
         print(f"  variable -> {key}")
     print(f"Synced {len(space_secrets)} secret(s) + {len(space_vars)} variable(s) to {target}")
 

@@ -158,11 +158,15 @@ jobs:
     needs: [resolve-env, build]
     if: needs.resolve-env.outputs.pr_space_slug != ''
     runs-on: ubuntu-latest
-    # Resolve secrets/vars from the `develop` GitHub environment so we can propagate its
+    # Resolve secrets/vars from the `staging` GitHub environment so we can propagate its
     # EXTRALIT_* config onto the ephemeral PR Space (duplicate_space copies files but NOT
     # secrets/variables).
     environment: ${{ needs.resolve-env.outputs.env_name }}
     env:
+      # NOT a git branch — `extralit-dev/develop` is the Hugging Face Space we clone previews
+      # from, and the custom OAuth app is pinned to its `extralit-dev-develop.hf.space`
+      # callback URL. It deliberately keeps the name "develop" after the trunk-based
+      # migration; renaming the Space would break OAuth. Do not "fix" this.
       SOURCE_SPACE: extralit-dev/develop
       DOCKER_REPO: extralitdev/extralit-hf-space
     steps:

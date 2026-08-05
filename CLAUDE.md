@@ -2,6 +2,31 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Branching & deploy
+
+Trunk-based. **`main` is the trunk and the default branch**; short-lived `feat/*` / `fix/*` / `docs/*`
+branches squash-merge into it via PR. There is no `develop` branch and no `releases/**` branches.
+
+This repo builds nothing on its own schedule — it is **dispatch-driven**. The `extralit` monorepo sends a
+`repository_dispatch` (`build-hf-space`) carrying `{tag, branch, is_release}`, and
+`.github/workflows/build-hf-space.yml`'s `resolve-env` job maps that payload onto a GitHub Environment:
+
+| Dispatch payload | Environment | Image | Deploys to |
+| --- | --- | --- | --- |
+| `is_release: true` | `production` | `extralit/extralit-hf-space:vX.Y.Z` + `:latest`, amd64+arm64 | `extralit/public-demo` |
+| `branch: main` | `staging` | `extralitdev/extralit-hf-space:<tag>` + `:latest`, amd64 | `extralit-dev/develop` |
+| `branch: <n>/merge` | `staging` | `extralitdev/extralit-hf-space:pr-<n>`, amd64 | ephemeral `extralit-dev/pr-<n>` |
+
+**`is_release` is the only production signal.** Branch names are not load-bearing — a payload without
+`is_release: true` can never reach `production`, whatever branch it names.
+
+Per-environment `DOCKER_REPO`, `EXTRALIT_SERVER_IMAGE`, and `HF_SPACE_ID` live in GitHub Environment
+variables, so the workflow never hardcodes a registry or Space ID.
+
+> The Space `extralit-dev/develop` keeps its name despite the branch being retired: it is a Hugging Face
+> resource whose OAuth app is pinned to the `extralit-dev-develop.hf.space` callback. Renaming it breaks
+> login.
+
 ## Hugging Face Spaces Deployment (extralit-hf-space/)
 
 The `extralit-hf-space/` directory (located at the repo root) contains a complete, self-contained deployment bundle for running Extralit on Hugging Face Spaces. This is a separate project that includes everything needed for a one-click deployment.
