@@ -27,52 +27,51 @@ jobs:
         run: |
           set -euo pipefail
 
-          TAG_LATEST="false"
-
+          # A manual run carries no client_payload, so it can only ever produce a staging
+          # build (see below) — production is driven solely by the monorepo's release.yml.
+          # To re-deploy production, re-run the original dispatch-triggered run from the
+          # Actions UI so its client_payload is replayed.
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
             BRANCH="$REF_NAME"
             IMAGE_TAG="latest"
           elif [[ "$EVENT_NAME" == "repository_dispatch" ]]; then
             IMAGE_TAG="$PAYLOAD_TAG"
-            if [[ "$PAYLOAD_IS_RELEASE" == "true" ]]; then
-              BRANCH="main"
-            elif [[ -n "$PAYLOAD_BRANCH" ]]; then
-              BRANCH="$PAYLOAD_BRANCH"
-            else
-              BRANCH="develop"
-            fi
+            BRANCH="${PAYLOAD_BRANCH:-main}"
           else
             echo "::error::Unsupported event: $EVENT_NAME"
             exit 1
           fi
 
-          case "$BRANCH" in
-            main)
-              ENV_NAME="main"
-              if [[ "$EVENT_NAME" == "repository_dispatch" ]]; then
-                TAG_LATEST="true"
-                PLATFORMS="linux/amd64,linux/arm64"
-              else
-                PLATFORMS="linux/amd64"
-              fi
-              ;;
-            develop)
-              ENV_NAME="develop"
-              TAG_LATEST="true"
-              PLATFORMS="linux/amd64"
-              ;;
-            *)
-              ENV_NAME="develop"
-              PLATFORMS="linux/amd64"
-              ;;
-          esac
-
-          PR_SPACE_SLUG=""
-          if [[ "$BRANCH" != "main" && "$BRANCH" != "develop" ]]; then
+          # `is_release` is the ONLY production signal — branch names are not load-bearing.
+          # A payload that doesn't set it can never select the production environment, and so
+          # can never touch extralit/public-demo, whatever branch it claims to come from.
+          if [[ "${PAYLOAD_IS_RELEASE:-}" == "true" ]]; then
+            ENV_NAME="production"
+            TAG_LATEST="true"
+            PLATFORMS="linux/amd64,linux/arm64"
+            PR_SPACE_SLUG=""
+          elif [[ "$BRANCH" == "main" || "$BRANCH" == "develop" ]]; then
+            # `develop` is a migration alias so dispatches still in flight from the pre-trunk
+            # monorepo land on staging rather than spinning up a preview Space. Drop it once
+            # the trunk flip is verified.
+            ENV_NAME="staging"
+            TAG_LATEST="true"
+            PLATFORMS="linux/amd64"
+            PR_SPACE_SLUG=""
+          else
+            # PR merge refs (`<n>/merge`) and anything else get an ephemeral preview Space,
+            # and never move a `:latest` tag.
+            ENV_NAME="staging"
+            TAG_LATEST="false"
+            PLATFORMS="linux/amd64"
             if [[ "$BRANCH" =~ ^([0-9]+)/merge$ ]]; then
               PR_SPACE_SLUG="pr-${BASH_REMATCH[1]}"
             else
-              PR_SPACE_SLUG=$(echo "$BRANCH" | sed 's|[^a-zA-Z0-9-]|-|g' | head -c 50)
+              # Truncate with parameter expansion rather than `| head -c 50`, which under
+              # `pipefail` couples the step's exit status to a pipeline that exists only to
+              # cut a string. HF Space names cap at 96 chars; 50 leaves room for the org.
+              slug=$(echo "$BRANCH" | sed 's|[^a-zA-Z0-9-]|-|g')
+              PR_SPACE_SLUG="${slug:0:50}"
             fi
           fi
 
