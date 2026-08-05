@@ -91,15 +91,30 @@ extralit: sleep 30; /bin/bash start_extralit_server.sh
 
 ### Configuration
 
+Server settings are `pydantic-settings` fields read with `env_prefix = "EXTRALIT_"` (see
+`extralit-server/src/extralit_server/settings.py` in the **`Extralit/extralit` monorepo**),
+so **every** knob below is spelled `EXTRALIT_*`. There is no unprefixed `S3_ENDPOINT` —
+that name is read by nothing.
+
 **Required for Persistence:**
 - `EXTRALIT_DATABASE_URL` - PostgreSQL connection string
-- `S3_ENDPOINT` - S3-compatible storage endpoint
-- `S3_ACCESS_KEY` - Storage access key
-- `S3_SECRET_KEY` - Storage secret key
+- `EXTRALIT_S3_ENDPOINT` - S3-compatible storage endpoint
+- `EXTRALIT_S3_ACCESS_KEY` - Storage access key
+- `EXTRALIT_S3_SECRET_KEY` - Storage secret key
+- `EXTRALIT_S3_REGION` - Storage region (optional)
 
-**OAuth Integration:**
-- `OAUTH2_HUGGINGFACE_CLIENT_ID` - HF OAuth app ID
-- `OAUTH2_HUGGINGFACE_CLIENT_SECRET` - HF OAuth secret
+That shared prefix is load-bearing, not cosmetic: `scripts/deploy_pr_space.py` forwards
+exactly the `EXTRALIT_*` keys from the `staging` environment onto each preview Space, so
+adding a correctly-named secret or variable there is all it takes to reach a preview.
+Anything named otherwise is filtered out — deliberately, since that is what keeps
+`HF_TOKEN` and `DOCKER_*` off the Space.
+
+**OAuth Integration:** nothing to configure, and nothing forwarded from GitHub. Spaces
+declaring `hf_oauth: true` (which `PR_README` in `deploy_pr_space.py` does) get
+`OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET` / `OAUTH_SCOPES` injected by Hugging Face at
+runtime; `scripts/start.sh` re-exports them as the `OAUTH2_HUGGINGFACE_*` names the server
+expects. The one exception is the source Space `extralit-dev/develop`, whose *custom* OAuth
+app is pinned to its own callback URL and therefore does not carry over to previews.
 
 
 **HF Spaces Production (`extralit-hf-space/`):**

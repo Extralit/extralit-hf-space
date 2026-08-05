@@ -6,6 +6,11 @@ on:
       - build-hf-space
   workflow_dispatch:
 
+# Nothing here writes to this repository: images go to Docker Hub and Spaces are driven by
+# HF_TOKEN, so the workflow token only ever needs to read the checkout.
+permissions:
+  contents: read
+
 jobs:
   resolve-env:
     runs-on: ubuntu-latest
@@ -91,6 +96,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # Nothing after this runs git; don't leave the token in .git/config for the
+          # docker build (and its build context) to pick up.
+          persist-credentials: false
 
       - name: Construct Docker tags
         env:
@@ -148,7 +157,10 @@ jobs:
           HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
         run: |
           echo "Restarting HF Space: $HF_SPACE_ID"
-          curl -sS -X POST \
+          # --fail-with-body, not bare --fail: without it curl exits 0 on 4xx/5xx and the job
+          # reports a successful production deploy that never happened. The `-with-body` half
+          # keeps HF's error JSON visible instead of swallowing it (curl >= 7.76).
+          curl --fail-with-body -sS -X POST \
             "https://huggingface.co/api/spaces/${HF_SPACE_ID}/restart" \
             -H "Authorization: Bearer $HF_TOKEN" \
             -w "\nHTTP Status: %{http_code}\n"
@@ -167,19 +179,26 @@ jobs:
       # callback URL. It deliberately keeps the name "develop" after the trunk-based
       # migration; renaming the Space would break OAuth. Do not "fix" this.
       SOURCE_SPACE: extralit-dev/develop
-      DOCKER_REPO: extralitdev/extralit-hf-space
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # Only scripts/deploy_pr_space.py runs from here, and it talks to HF, not git.
+          persist-credentials: false
 
       - name: Deploy PR Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           PR_SPACE_SLUG: ${{ needs.resolve-env.outputs.pr_space_slug }}
           IMAGE_TAG: ${{ needs.resolve-env.outputs.image_tag }}
+          # Same source the `build` job pushed to. Hardcoding it here would let an
+          # environment change point the preview Space at an image that was never built.
+          DOCKER_REPO: ${{ vars.DOCKER_REPO }}
           # Whole secret/var scope; the script forwards only EXTRALIT_* onto the Space.
           ALL_SECRETS: ${{ toJSON(secrets) }}
           ALL_VARS: ${{ toJSON(vars) }}
         run: |
-          pip install -q huggingface_hub
+          # Pinned: this step receives the full secret scope, so the one dependency it
+          # installs must not be a moving target.
+          pip install -q 'huggingface_hub==1.26.0'
           python scripts/deploy_pr_space.py

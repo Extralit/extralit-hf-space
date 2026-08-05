@@ -25,6 +25,7 @@ import json
 import os
 
 from huggingface_hub import HfApi
+from huggingface_hub.errors import RepositoryNotFoundError
 
 PR_README = """\
 ---
@@ -61,7 +62,14 @@ def main() -> None:
     try:
         api.space_info(target)
         print(f"Space '{target}' already exists")
-    except Exception:
+    except RepositoryNotFoundError as exc:
+        # RepositoryNotFoundError covers 401 as well as 404 — the Hub returns 401 for a
+        # private repo rather than leak whether it exists. Only a 404 means "not created
+        # yet"; a bad/expired HF_TOKEN must fail loudly here instead of silently falling
+        # through to duplicate_space and failing later with a confusing error.
+        response = getattr(exc, "response", None)
+        if response is None or response.status_code != 404:
+            raise
         print(f"Creating '{target}' from '{source}'")
         api.duplicate_space(source, to_id=target, exist_ok=True, hardware="cpu-basic")
         api.upload_file(
