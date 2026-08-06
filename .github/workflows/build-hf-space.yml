@@ -138,6 +138,10 @@ jobs:
 
       - name: Update Docker Hub description
         if: needs.resolve-env.outputs.tag_latest == 'true'
+        # Cosmetic metadata, and it must never gate a deploy: `deploy-space` needs this job, so
+        # a Forbidden here (a scoped Docker Hub token without admin on the repo, which is what
+        # the staging credentials are) would otherwise leave a pushed image undeployed.
+        continue-on-error: true
         uses: peter-evans/dockerhub-description@v4
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
