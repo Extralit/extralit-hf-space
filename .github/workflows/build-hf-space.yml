@@ -198,11 +198,22 @@ jobs:
           # Same source the `build` job pushed to. Hardcoding it here would let an
           # environment change point the preview Space at an image that was never built.
           DOCKER_REPO: ${{ vars.DOCKER_REPO }}
-          # Whole secret/var scope; the script forwards only EXTRALIT_* onto the Space.
-          ALL_SECRETS: ${{ toJSON(secrets) }}
+          # EXTRALIT_* secrets destined for the preview Space must be listed here one at a
+          # time, as {"EXTRALIT_FOO": "${{ secrets.EXTRALIT_FOO }}"}. The staging environment
+          # defines none today, hence the empty object.
+          #
+          # Deliberately NOT `toJSON(secrets)`. That handed the full credential scope
+          # (HF_TOKEN, DOCKER_USERNAME, DOCKER_PASSWORD) to a pip-installed dependency purely
+          # so the script could filter it back out in Python — and "serialise every secret,
+          # install a package, POST to an external host" is indistinguishable from credential
+          # exfiltration. GitHub's malicious-workflow detector agreed and held every run of
+          # this file for manual approval, which is what made the deploy non-automatic.
+          ALL_SECRETS: "{}"
+          # Variables are not credentials, so the whole set is safe to pass: EXTRALIT_* config
+          # still reaches a preview by adding an environment *variable*, with no edit here.
           ALL_VARS: ${{ toJSON(vars) }}
         run: |
-          # Pinned: this step receives the full secret scope, so the one dependency it
-          # installs must not be a moving target.
+          # Pinned: this step still handles HF_TOKEN, so its one dependency must not be a
+          # moving target.
           pip install -q 'huggingface_hub==1.26.0'
           python scripts/deploy_pr_space.py

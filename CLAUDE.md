@@ -104,10 +104,16 @@ that name is read by nothing.
 - `EXTRALIT_S3_REGION` - Storage region (optional)
 
 That shared prefix is load-bearing, not cosmetic: `scripts/deploy_pr_space.py` forwards
-exactly the `EXTRALIT_*` keys from the `staging` environment onto each preview Space, so
-adding a correctly-named secret or variable there is all it takes to reach a preview.
+exactly the `EXTRALIT_*` keys from the `staging` environment onto each preview Space.
 Anything named otherwise is filtered out — deliberately, since that is what keeps
 `HF_TOKEN` and `DOCKER_*` off the Space.
+
+**Variables and secrets differ here.** Adding an `EXTRALIT_*` environment *variable* is all
+it takes to reach a preview — the whole `vars` set is passed through. An `EXTRALIT_*`
+*secret* must additionally be named in `build-hf-space.yml`'s `ALL_SECRETS` object. The
+workflow no longer passes `toJSON(secrets)`: doing so handed every credential in scope to a
+pip-installed dependency so the script could filter it back out, and GitHub's
+malicious-workflow detector held every run of the file for manual approval as a result.
 
 **OAuth Integration:** nothing to configure, and nothing forwarded from GitHub. Spaces
 declaring `hf_oauth: true` (which `PR_README` in `deploy_pr_space.py` does) get
