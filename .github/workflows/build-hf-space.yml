@@ -7,7 +7,13 @@ on:
   workflow_dispatch:
 
 # Nothing here writes to this repository: images go to Docker Hub and Spaces are driven by
-# HF_TOKEN, so the workflow token only ever needs to read the checkout.
+# HF credentials, so the workflow token only ever needs to read the checkout.
+#
+# `deploy-space` additionally grants itself `id-token: write` at the JOB level to mint an
+# OIDC token for HF Trusted Publishers. Keep that grant out of here: it is precisely what
+# stops `build` and `deploy-pr-space` from exchanging for a production Space token, since
+# they run from the same repo/branch/workflow and would otherwise satisfy the publisher's
+# claims. https://huggingface.co/docs/hub/en/trusted-publishers
 permissions:
   contents: read
 
@@ -142,29 +148,49 @@ jobs:
     if: needs.resolve-env.outputs.pr_space_slug == ''
     runs-on: ubuntu-latest
     environment: ${{ needs.resolve-env.outputs.env_name }}
+    # Keyless: no HF_TOKEN. `id-token: write` lets this job mint a GitHub OIDC token, which
+    # HF exchanges (RFC 8693) for a token scoped to just this one Space and valid ~1h. The
+    # grant lives HERE and not at the top of the file on purpose — see the note up there.
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Rebuild HF Space
         env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          # The whole configuration for keyless auth. huggingface_hub reads this inside
+          # get_token() (utils/_auth.py::_get_token_from_oidc) and mints + exchanges +
+          # caches the token itself. It never falls back to an ambient credential: if the
+          # exchange fails it raises OIDCError, so a missing/misconfigured Trusted Publisher
+          # surfaces as a red job rather than a silently unauthenticated one.
+          #
+          # The value must match the publisher registered on the Space
+          # (https://huggingface.co/docs/hub/en/trusted-publishers), which is claim-checked
+          # against repo=Extralit/extralit-hf-space, branch=main, workflow=build-hf-space.yml.
+          HF_OIDC_RESOURCE: spaces/${{ vars.HF_SPACE_ID }}
           HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
         run: |
-          echo "Factory-rebooting HF Space: $HF_SPACE_ID"
-          # `factory=true`, NOT a plain restart. These Spaces are a thin Dockerfile that does
-          # `FROM <the image this workflow just pushed>`; a plain restart reuses the image HF
-          # already built and never re-pulls that base, so the job reports a green deploy while
-          # the Space keeps serving the old version. That is exactly what v0.7.0 did — the Space
-          # cycled RUNNING_APP_STARTING -> RUNNING and still reported 0.6.1.
+          # Pinned for the same reason as deploy-pr-space: this step handles credentials, so
+          # its one dependency must not be a moving target.
+          pip install -q 'huggingface_hub==1.26.0'
+          python - <<'PY'
+          import os
+
+          from huggingface_hub import HfApi
+
+          space = os.environ["HF_SPACE_ID"]
+          print(f"Factory-rebooting HF Space: {space}")
+          # factory_reboot=True, NOT a plain restart. These Spaces are a thin Dockerfile that
+          # does `FROM <the image this workflow just pushed>`; a plain restart reuses the image
+          # HF already built and never re-pulls that base, so the job reports a green deploy
+          # while the Space keeps serving the old version. That is exactly what v0.7.0 did —
+          # the Space cycled RUNNING_APP_STARTING -> RUNNING and still reported 0.6.1.
           #
-          # `factory` is the parameter huggingface_hub sets for restart_space(factory_reboot=True),
-          # documented as "the Space will be rebuilt from scratch without caching any requirements".
-          #
-          # --fail-with-body, not bare --fail: without it curl exits 0 on 4xx/5xx and the job
-          # reports a successful production deploy that never happened. The `-with-body` half
-          # keeps HF's error JSON visible instead of swallowing it (curl >= 7.76).
-          curl --fail-with-body -sS -X POST \
-            "https://huggingface.co/api/spaces/${HF_SPACE_ID}/restart?factory=true" \
-            -H "Authorization: Bearer $HF_TOKEN" \
-            -w "\nHTTP Status: %{http_code}\n"
+          # No --fail-with-body equivalent is needed here: restart_space() runs the response
+          # through hf_raise_for_status(), so a 4xx/5xx raises with HF's error body attached
+          # and cannot report a successful production deploy that never happened.
+          runtime = HfApi().restart_space(space, factory_reboot=True)
+          print(f"Stage: {runtime.stage}")
+          PY
 
   deploy-pr-space:
     needs: [resolve-env, build]
