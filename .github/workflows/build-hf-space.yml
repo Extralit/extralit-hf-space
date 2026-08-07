@@ -142,17 +142,26 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ needs.resolve-env.outputs.env_name }}
     steps:
-      - name: Restart HF Space
+      - name: Rebuild HF Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
         run: |
-          echo "Restarting HF Space: $HF_SPACE_ID"
+          echo "Factory-rebooting HF Space: $HF_SPACE_ID"
+          # `factory=true`, NOT a plain restart. These Spaces are a thin Dockerfile that does
+          # `FROM <the image this workflow just pushed>`; a plain restart reuses the image HF
+          # already built and never re-pulls that base, so the job reports a green deploy while
+          # the Space keeps serving the old version. That is exactly what v0.7.0 did — the Space
+          # cycled RUNNING_APP_STARTING -> RUNNING and still reported 0.6.1.
+          #
+          # `factory` is the parameter huggingface_hub sets for restart_space(factory_reboot=True),
+          # documented as "the Space will be rebuilt from scratch without caching any requirements".
+          #
           # --fail-with-body, not bare --fail: without it curl exits 0 on 4xx/5xx and the job
           # reports a successful production deploy that never happened. The `-with-body` half
           # keeps HF's error JSON visible instead of swallowing it (curl >= 7.76).
           curl --fail-with-body -sS -X POST \
-            "https://huggingface.co/api/spaces/${HF_SPACE_ID}/restart" \
+            "https://huggingface.co/api/spaces/${HF_SPACE_ID}/restart?factory=true" \
             -H "Authorization: Bearer $HF_TOKEN" \
             -w "\nHTTP Status: %{http_code}\n"
 
