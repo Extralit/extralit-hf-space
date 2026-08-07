@@ -215,6 +215,24 @@ jobs:
 
       - name: Deploy PR Space
         env:
+          # The last stored HF credential in this repo, and it cannot be removed. Trusted
+          # Publishers (which made `deploy-space` keyless) come in exactly two flavors, and
+          # neither covers this job:
+          #
+          #   - a REPO publisher is registered in an existing repo's settings and yields a
+          #     token scoped to that one repo;
+          #   - a USER publisher yields a read-only `gated-repos` token — "it cannot write
+          #     anything".
+          #
+          # There is no org-scoped write token and no way to CREATE a repo, so
+          # `duplicate_space()` spawning `extralit-dev/pr-N` has nothing to exchange against
+          # (the Hub answers `invalid_grant`: "repo or user not found"). Registering a
+          # publisher per preview Space would itself need a token, so it does not bootstrap.
+          # See https://huggingface.co/docs/hub/en/trusted-publishers ("Two flavors").
+          #
+          # What bounds the risk instead is scope: this secret is defined ONLY on the
+          # `staging` environment and should be a fine-grained token with write limited to
+          # the `extralit-dev` org. Nothing here can reach `extralit/public-demo`.
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           PR_SPACE_SLUG: ${{ needs.resolve-env.outputs.pr_space_slug }}
           IMAGE_TAG: ${{ needs.resolve-env.outputs.image_tag }}
