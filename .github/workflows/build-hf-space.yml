@@ -55,10 +55,11 @@ jobs:
             TAG_LATEST="true"
             PLATFORMS="linux/amd64,linux/arm64"
             PR_SPACE_SLUG=""
-          elif [[ "$BRANCH" == "main" || "$BRANCH" == "develop" ]]; then
-            # `develop` is a migration alias so dispatches still in flight from the pre-trunk
-            # monorepo land on staging rather than spinning up a preview Space. Drop it once
-            # the trunk flip is verified.
+          elif [[ "$BRANCH" == "main" ]]; then
+            # Trunk. `develop` was accepted here as a migration alias during the trunk cutover;
+            # that branch no longer exists in either repo and nothing can dispatch it, so the
+            # alias is gone. A stray `develop` payload would now get a preview Space, which is
+            # the correct answer for an unrecognised branch.
             ENV_NAME="staging"
             TAG_LATEST="true"
             PLATFORMS="linux/amd64"
