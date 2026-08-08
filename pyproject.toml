@@ -26,6 +26,7 @@ dev = [
     "pytest",
     # Matches the version the deploy jobs pip-install, so tests hit the same API surface.
     "huggingface_hub==1.26.0",
+    "pyyaml",
 ]
 
 [tool.pytest.ini_options]

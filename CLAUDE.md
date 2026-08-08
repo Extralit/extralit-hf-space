@@ -159,6 +159,36 @@ behind a 45-minute `wait_for_space`.
 `scripts/types.py`, or `scripts/logging.py`** — the same mechanism would shadow those stdlib
 modules for `huggingface_hub`'s transitive dependencies.
 
+### `space_template/` and the `__VAR__` placeholder
+
+`space_template/` holds what a *new* Space should contain — `README.md`, `Dockerfile`,
+`.oauth.yaml`, and a `manifest.json` listing the files, the variables, and their defaults.
+It exists because `duplicate_space` copies **per-Space** config: anyone duplicating
+`extralit/public-demo` inherits extralit's `allowed_workspaces`, which are workspaces they do
+not have. So overwriting `README.md` and `.oauth.yaml` after creation is required, not tidier.
+
+`manifest.json` deliberately carries no `required_secrets`. That contract lives in the Hub's
+`deployment_templates.required_secrets` and is consumed by four routes; a second copy here
+has no seeder, and the drift surfaces as a user's Space silently missing a secret.
+
+Placeholders are `__VAR__`, and the alternatives are all worse:
+
+- `{{VAR}}` — an unquoted YAML plain scalar starting with `{` is a flow mapping, so the
+  unrendered `.oauth.yaml` would fail pre-commit's `check-yaml` (which runs with no path
+  filters).
+- `${VAR}` — collides with Dockerfile `ARG`/`ENV` expansion.
+- `string.Template.safe_substitute` — unknown placeholders pass through silently, which *is*
+  the silent-wipe failure mode.
+
+`__VAR__` is a valid YAML plain scalar and a valid Dockerfile literal, `hf_space.render`
+raises on any placeholder it was not given a value for, and the whole thing is a two-line
+regex in Python and in TypeScript, with no library either side.
+
+`scripts/check_space_config.py` is what keeps the template from becoming a file that looks
+authoritative but is inert: it renders with each live Space's variables and diffs, comparing
+parsed YAML rather than bytes and ignoring the `Dockerfile` `FROM` line that CI owns. It is
+**report-only and must stay outside any job holding `id-token: write`.**
+
 **Variables and secrets differ here.** Adding an `EXTRALIT_*` environment *variable* is all
 it takes to reach a preview — the whole `vars` set is passed through. An `EXTRALIT_*`
 *secret* must additionally be named in `build-hf-space.yml`'s `ALL_SECRETS` object. The

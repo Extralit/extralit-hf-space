@@ -4,8 +4,9 @@
 Invoked by the ``deploy-pr-space`` job in ``.github/workflows/build-hf-space.yml``.
 
 Flow:
-  1. Duplicate ``SOURCE_SPACE`` -> ``<org>/<PR_SPACE_SLUG>`` on first run (writing a
-     minimal README), otherwise reuse the existing Space.
+  1. Duplicate ``SOURCE_SPACE`` -> ``<org>/<PR_SPACE_SLUG>`` on first run, then render
+     ``space_template/`` over the per-Space config the copy inherited. Otherwise reuse the
+     existing Space and leave its config alone.
   2. Propagate ``EXTRALIT_*`` config from the ``staging`` GitHub environment onto the Space.
      ``duplicate_space`` copies files but NOT secrets/variables, so without this a PR
      Space has no DB/S3/auth config. GitHub env *secrets* -> Space secrets; *variables*
@@ -25,24 +26,18 @@ Configuration is read entirely from environment variables:
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
-from hf_space import deploy_pinned_image, filter_prefixed
+from hf_space import deploy_pinned_image, filter_prefixed, render_space_files, workspaces_value
 from huggingface_hub import HfApi
 from huggingface_hub.errors import RepositoryNotFoundError
 
-PR_README = """\
----
-title: Extralit PR Preview
-emoji: '\U0001f4bb'
-colorFrom: purple
-colorTo: red
-sdk: docker
-app_port: 6900
-fullWidth: true
-license: apache-2.0
-hf_oauth: true
----
-"""
+TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "space_template"
+# Mirrors SOURCE_SPACE's own allowlist; the server creates these at startup if absent.
+PR_WORKSPACES = ["public", "test"]
+# The Dockerfile is rendered by deploy_pinned_image instead, so its upload is the one that
+# triggers the rebuild this job then waits on.
+CREATE_FILES = ["README.md", ".oauth.yaml"]
 
 
 def main() -> None:
@@ -66,13 +61,24 @@ def main() -> None:
             raise
         print(f"Creating '{target}' from '{source}'")
         api.duplicate_space(source, to_id=target, exist_ok=True, hardware="cpu-basic")
-        api.upload_file(
-            path_or_fileobj=PR_README.encode(),
-            path_in_repo="README.md",
-            repo_id=target,
-            repo_type="space",
-            commit_message="Enable HF OAuth",
+        # duplicate_space copies the source Space's README and allowlist verbatim, so the
+        # preview would otherwise run without hf_oauth and against the source's workspaces.
+        rendered = render_space_files(
+            TEMPLATE_DIR,
+            {
+                "TITLE": "Extralit PR Preview",
+                "WORKSPACES": workspaces_value(PR_WORKSPACES),
+                "IMAGE_REF": image_ref,
+            },
         )
+        for name in CREATE_FILES:
+            api.upload_file(
+                path_or_fileobj=rendered[name].encode(),
+                path_in_repo=name,
+                repo_id=target,
+                repo_type="space",
+                commit_message=f"Render {name} from space_template",
+            )
 
     space_secrets = filter_prefixed(os.environ.get("ALL_SECRETS", ""), "EXTRALIT_")
     space_vars = filter_prefixed(os.environ.get("ALL_VARS", ""), "EXTRALIT_")

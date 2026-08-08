@@ -14,10 +14,14 @@ from __future__ import annotations
 import json
 import re
 import time
+from pathlib import Path
 
 from huggingface_hub import SpaceStage
 
 _FROM_LINE = re.compile(r"^FROM\s+\S+", re.M)
+# `__VAR__`, not `{{VAR}}` (an unquoted `{` starts a YAML flow mapping, so the unrendered
+# .oauth.yaml would fail pre-commit's check-yaml) and not `${VAR}` (Dockerfile ARG/ENV).
+_PLACEHOLDER = re.compile(r"__([A-Z0-9_]+)__")
 
 
 def filter_prefixed(raw: str, prefix: str) -> dict[str, str]:
@@ -39,6 +43,39 @@ def pin_dockerfile(text: str, image_ref: str) -> str:
     if not found:
         raise ValueError("No FROM line to pin in the Dockerfile")
     return out
+
+
+def render(text: str, variables: dict[str, str]) -> str:
+    """Substitute every ``__VAR__`` in ``text``, raising on one that has no value.
+
+    Deliberately not ``string.Template.safe_substitute``: an unresolved placeholder passing
+    through silently is the failure mode that ships a broken Space config.
+    """
+
+    def value_for(match: re.Match) -> str:
+        name = match.group(1)
+        try:
+            return variables[name]
+        except KeyError:
+            raise KeyError(f"No value for template placeholder __{name}__") from None
+
+    return _PLACEHOLDER.sub(value_for, text)
+
+
+def workspaces_value(names) -> str:
+    """Format workspace names as the YAML flow sequence ``allowed_workspaces`` expects."""
+    return "[" + ", ".join(f"{{name: {name}}}" for name in names) + "]"
+
+
+def render_space_files(template_dir, variables: dict[str, str]) -> dict[str, str]:
+    """Render every file ``manifest.json`` lists, keyed by its path in the Space repo."""
+    root = Path(template_dir)
+    manifest = json.loads((root / "manifest.json").read_text())
+    values = {**manifest.get("defaults", {}), **variables}
+    missing = sorted(set(manifest["variables"]) - set(values))
+    if missing:
+        raise KeyError(f"Template variables without a value: {missing}")
+    return {name: render((root / name).read_text(), values) for name in manifest["files"]}
 
 
 def deploy_pinned_image(api, space_id: str, image_ref: str):

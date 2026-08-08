@@ -117,6 +117,7 @@ dependencies = [
 dev = [
     { name = "huggingface-hub" },
     { name = "pytest" },
+    { name = "pyyaml" },
     { name = "rq-dashboard" },
     { name = "ruff" },
 ]
@@ -134,6 +135,7 @@ requires-dist = [
 dev = [
     { name = "huggingface-hub", specifier = "==1.26.0" },
     { name = "pytest" },
+    { name = "pyyaml" },
     { name = "rq-dashboard" },
     { name = "ruff" },
 ]
