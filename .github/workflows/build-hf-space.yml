@@ -6,8 +6,7 @@ on:
       - build-hf-space
   workflow_dispatch:
 
-# Nothing here writes to this repository: images go to Docker Hub and Spaces are driven by
-# HF_TOKEN, so the workflow token only ever needs to read the checkout.
+# Keep `id-token: write` job-scoped to deploy-space, else any job can mint a prod token.
 permissions:
   contents: read
 
@@ -32,10 +31,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          # A manual run carries no client_payload, so it can only ever produce a staging
-          # build (see below) — production is driven solely by the monorepo's release.yml.
-          # To re-deploy production, re-run the original dispatch-triggered run from the
-          # Actions UI so its client_payload is replayed.
+          # No client_payload means staging only; re-run the original dispatch to redeploy prod.
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
             BRANCH="$REF_NAME"
             IMAGE_TAG="latest"
@@ -48,34 +44,26 @@ jobs:
           fi
 
           # `is_release` is the ONLY production signal — branch names are not load-bearing.
-          # A payload that doesn't set it can never select the production environment, and so
-          # can never touch extralit/public-demo, whatever branch it claims to come from.
           if [[ "${PAYLOAD_IS_RELEASE:-}" == "true" ]]; then
             ENV_NAME="production"
             TAG_LATEST="true"
             PLATFORMS="linux/amd64,linux/arm64"
             PR_SPACE_SLUG=""
           elif [[ "$BRANCH" == "main" ]]; then
-            # Trunk. `develop` was accepted here as a migration alias during the trunk cutover;
-            # that branch no longer exists in either repo and nothing can dispatch it, so the
-            # alias is gone. A stray `develop` payload would now get a preview Space, which is
-            # the correct answer for an unrecognised branch.
+            # Trunk. The `develop` migration alias is gone; a stray payload gets a preview Space.
             ENV_NAME="staging"
             TAG_LATEST="true"
             PLATFORMS="linux/amd64"
             PR_SPACE_SLUG=""
           else
-            # PR merge refs (`<n>/merge`) and anything else get an ephemeral preview Space,
-            # and never move a `:latest` tag.
+            # PR merge refs and anything else get a preview Space, and never move `:latest`.
             ENV_NAME="staging"
             TAG_LATEST="false"
             PLATFORMS="linux/amd64"
             if [[ "$BRANCH" =~ ^([0-9]+)/merge$ ]]; then
               PR_SPACE_SLUG="pr-${BASH_REMATCH[1]}"
             else
-              # Truncate with parameter expansion rather than `| head -c 50`, which under
-              # `pipefail` couples the step's exit status to a pipeline that exists only to
-              # cut a string. HF Space names cap at 96 chars; 50 leaves room for the org.
+              # Expansion not `| head -c 50`, which under pipefail couples exit status to a pipe.
               slug=$(echo "$BRANCH" | sed 's|[^a-zA-Z0-9-]|-|g')
               PR_SPACE_SLUG="${slug:0:50}"
             fi
@@ -98,8 +86,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # Nothing after this runs git; don't leave the token in .git/config for the
-          # docker build (and its build context) to pick up.
+          # Keep the token out of .git/config, which the docker build context would pick up.
           persist-credentials: false
 
       - name: Construct Docker tags
@@ -142,43 +129,55 @@ jobs:
     if: needs.resolve-env.outputs.pr_space_slug == ''
     runs-on: ubuntu-latest
     environment: ${{ needs.resolve-env.outputs.env_name }}
+    # Keyless: no HF_TOKEN. Job-scoped on purpose — see the note at the top of this file.
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Rebuild HF Space
         env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          # Whole config for keyless auth; huggingface_hub exchanges it or raises OIDCError.
+          HF_OIDC_RESOURCE: spaces/${{ vars.HF_SPACE_ID }}
           HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
         run: |
-          echo "Factory-rebooting HF Space: $HF_SPACE_ID"
-          # `factory=true`, NOT a plain restart. These Spaces are a thin Dockerfile that does
-          # `FROM <the image this workflow just pushed>`; a plain restart reuses the image HF
-          # already built and never re-pulls that base, so the job reports a green deploy while
-          # the Space keeps serving the old version. That is exactly what v0.7.0 did — the Space
-          # cycled RUNNING_APP_STARTING -> RUNNING and still reported 0.6.1.
-          #
-          # `factory` is the parameter huggingface_hub sets for restart_space(factory_reboot=True),
-          # documented as "the Space will be rebuilt from scratch without caching any requirements".
-          #
-          # --fail-with-body, not bare --fail: without it curl exits 0 on 4xx/5xx and the job
-          # reports a successful production deploy that never happened. The `-with-body` half
-          # keeps HF's error JSON visible instead of swallowing it (curl >= 7.76).
-          curl --fail-with-body -sS -X POST \
-            "https://huggingface.co/api/spaces/${HF_SPACE_ID}/restart?factory=true" \
-            -H "Authorization: Bearer $HF_TOKEN" \
-            -w "\nHTTP Status: %{http_code}\n"
+          # Pinned: this step handles credentials, so its one dependency is not a moving target.
+          pip install -q 'huggingface_hub==1.26.0'
+          python - <<'PY'
+          import os
+          import time
+
+          from huggingface_hub import HfApi, SpaceStage
+
+          BUILD_STAGES = (
+              SpaceStage.BUILDING,
+              SpaceStage.RUNNING_BUILDING,
+              SpaceStage.APP_STARTING,
+              SpaceStage.RUNNING_APP_STARTING,
+          )
+
+          space = os.environ["HF_SPACE_ID"]
+          api = HfApi()
+          print(f"Factory-rebooting HF Space: {space}")
+          # factory_reboot, else the `FROM` base is not re-pulled and v0.7.0 ships as 0.6.1.
+          started = api.restart_space(space, factory_reboot=True)
+          # wait_for_space returns at the first non-build poll, which is the stale RUNNING.
+          if started.stage not in BUILD_STAGES:
+              time.sleep(30)
+          runtime = api.wait_for_space(space, timeout=2700, poll_interval=10)
+          print(f"Stage: {runtime.stage}")
+          # The reboot is async, so without this a BUILD_ERROR still reports a green deploy.
+          if runtime.stage != SpaceStage.RUNNING:
+              raise SystemExit(f"Deploy failed: {space} settled in {runtime.stage}")
+          PY
 
   deploy-pr-space:
     needs: [resolve-env, build]
     if: needs.resolve-env.outputs.pr_space_slug != ''
     runs-on: ubuntu-latest
-    # Resolve secrets/vars from the `staging` GitHub environment so we can propagate its
-    # EXTRALIT_* config onto the ephemeral PR Space (duplicate_space copies files but NOT
-    # secrets/variables).
+    # `staging` env resolves the EXTRALIT_* config propagated onto the preview Space.
     environment: ${{ needs.resolve-env.outputs.env_name }}
     env:
-      # NOT a git branch — `extralit-dev/develop` is the Hugging Face Space we clone previews
-      # from, and the custom OAuth app is pinned to its `extralit-dev-develop.hf.space`
-      # callback URL. It deliberately keeps the name "develop" after the trunk-based
-      # migration; renaming the Space would break OAuth. Do not "fix" this.
+      # A Space, NOT a git branch; its OAuth app is pinned to this name. Do not "fix" this.
       SOURCE_SPACE: extralit-dev/develop
     steps:
       - name: Checkout repository
@@ -189,28 +188,17 @@ jobs:
 
       - name: Deploy PR Space
         env:
+          # Irreducible: Trusted Publishers cannot create repos, and duplicate_space does.
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           PR_SPACE_SLUG: ${{ needs.resolve-env.outputs.pr_space_slug }}
           IMAGE_TAG: ${{ needs.resolve-env.outputs.image_tag }}
-          # Same source the `build` job pushed to. Hardcoding it here would let an
-          # environment change point the preview Space at an image that was never built.
+          # Same source `build` pushed to; hardcoding allows deploying a never-built image.
           DOCKER_REPO: ${{ vars.DOCKER_REPO }}
-          # EXTRALIT_* secrets destined for the preview Space must be listed here one at a
-          # time, as {"EXTRALIT_FOO": "${{ secrets.EXTRALIT_FOO }}"}. The staging environment
-          # defines none today, hence the empty object.
-          #
-          # Deliberately NOT `toJSON(secrets)`. That handed the full credential scope
-          # (HF_TOKEN, DOCKER_USERNAME, DOCKER_PASSWORD) to a pip-installed dependency purely
-          # so the script could filter it back out in Python — and "serialise every secret,
-          # install a package, POST to an external host" is indistinguishable from credential
-          # exfiltration. GitHub's malicious-workflow detector agreed and held every run of
-          # this file for manual approval, which is what made the deploy non-automatic.
+          # List EXTRALIT_* secrets one at a time; `toJSON(secrets)` tripped GitHub's detector.
           ALL_SECRETS: "{}"
-          # Variables are not credentials, so the whole set is safe to pass: EXTRALIT_* config
-          # still reaches a preview by adding an environment *variable*, with no edit here.
+          # Variables are not credentials, so the whole set is safe to pass.
           ALL_VARS: ${{ toJSON(vars) }}
         run: |
-          # Pinned: this step still handles HF_TOKEN, so its one dependency must not be a
-          # moving target.
+          # Pinned: this step handles HF_TOKEN, so its one dependency is not a moving target.
           pip install -q 'huggingface_hub==1.26.0'
           python scripts/deploy_pr_space.py

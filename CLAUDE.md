@@ -108,6 +108,22 @@ exactly the `EXTRALIT_*` keys from the `staging` environment onto each preview S
 Anything named otherwise is filtered out — deliberately, since that is what keeps
 `HF_TOKEN` and `DOCKER_*` off the Space.
 
+**`HF_TOKEN` now exists in exactly one place: the `staging` environment.** The
+`deploy-space` job carries no HF credential at all — it authenticates via
+[Trusted Publishers](https://huggingface.co/docs/hub/en/trusted-publishers), exchanging a
+GitHub OIDC token for one scoped to a single Space for ~1h (`HF_OIDC_RESOURCE` +
+`permissions: id-token: write`, both in `build-hf-space.yml`). The surviving secret is
+there only because `duplicate_space()` **creates** `extralit-dev/pr-N`, and a trusted
+publisher can only be registered on a repo that already exists. So it is `extralit-dev`-only
+by construction; no stored credential can reach `extralit/public-demo`.
+
+Two traps when editing that job. The `id-token: write` grant belongs on **`deploy-space`,
+not at the top of the file** — every job here matches the publisher's repo/branch/workflow
+claims, so a workflow-level grant would hand `deploy-pr-space` the ability to mint a
+production token. And the restart must stay `factory_reboot=True`: a plain restart reuses
+the image HF already built without re-pulling the `FROM` base, which ships a green deploy of
+the previous version (that was v0.7.0).
+
 **Variables and secrets differ here.** Adding an `EXTRALIT_*` environment *variable* is all
 it takes to reach a preview — the whole `vars` set is passed through. An `EXTRALIT_*`
 *secret* must additionally be named in `build-hf-space.yml`'s `ALL_SECRETS` object. The
