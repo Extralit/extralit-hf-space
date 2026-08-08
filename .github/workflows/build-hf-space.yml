@@ -82,6 +82,9 @@ jobs:
     needs: resolve-env
     runs-on: ubuntu-latest
     environment: ${{ needs.resolve-env.outputs.env_name }}
+    outputs:
+      # Multi-platform builds yield the manifest-list digest, which is what `FROM` wants.
+      image_digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -114,6 +117,7 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Build & push Docker image
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -134,38 +138,53 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - name: Rebuild HF Space
+      - name: Pin HF Space to the image just built
         env:
           # Whole config for keyless auth; huggingface_hub exchanges it or raises OIDCError.
           HF_OIDC_RESOURCE: spaces/${{ vars.HF_SPACE_ID }}
           HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
+          DOCKER_REPO: ${{ vars.DOCKER_REPO }}
+          IMAGE_DIGEST: ${{ needs.build.outputs.image_digest }}
         run: |
           # Pinned: this step handles credentials, so its one dependency is not a moving target.
           pip install -q 'huggingface_hub==1.26.0'
           python - <<'PY'
           import os
+          import re
           import time
 
           from huggingface_hub import HfApi, SpaceStage
 
-          BUILD_STAGES = (
-              SpaceStage.BUILDING,
-              SpaceStage.RUNNING_BUILDING,
-              SpaceStage.APP_STARTING,
-              SpaceStage.RUNNING_APP_STARTING,
-          )
-
           space = os.environ["HF_SPACE_ID"]
+          pin = f"{os.environ['DOCKER_REPO']}@{os.environ['IMAGE_DIGEST']}"
           api = HfApi()
-          print(f"Factory-rebooting HF Space: {space}")
-          # factory_reboot, else the `FROM` base is not re-pulled and v0.7.0 ships as 0.6.1.
-          started = api.restart_space(space, factory_reboot=True)
-          # wait_for_space returns at the first non-build poll, which is the stale RUNNING.
-          if started.stage not in BUILD_STAGES:
+
+          # Commit-to-rebuild, not restart_space: the restart API rejects OIDC tokens with a 401.
+          with open(api.hf_hub_download(space, "Dockerfile", repo_type="space")) as fh:
+              before = fh.read()
+          after, found = re.subn(r"^FROM\s+\S+", f"FROM {pin}", before, count=1, flags=re.M)
+          if not found:
+              raise SystemExit(f"No FROM line in the {space} Dockerfile")
+
+          if after == before:
+              # Already serving this digest, so a no-op commit would trigger no rebuild to wait for.
+              print(f"{space} already pinned to {pin}")
+              runtime = api.get_space_runtime(space)
+          else:
+              print(f"Pinning {space} to {pin}")
+              api.upload_file(
+                  path_or_fileobj=after.encode(),
+                  path_in_repo="Dockerfile",
+                  repo_id=space,
+                  repo_type="space",
+                  commit_message=f"Deploy {pin}",
+              )
+              # wait_for_space returns at the first non-build poll, which is the stale RUNNING.
               time.sleep(30)
-          runtime = api.wait_for_space(space, timeout=2700, poll_interval=10)
+              runtime = api.wait_for_space(space, timeout=2700, poll_interval=10)
+
           print(f"Stage: {runtime.stage}")
-          # The reboot is async, so without this a BUILD_ERROR still reports a green deploy.
+          # The rebuild is async, so without this a BUILD_ERROR still reports a green deploy.
           if runtime.stage != SpaceStage.RUNNING:
               raise SystemExit(f"Deploy failed: {space} settled in {runtime.stage}")
           PY
