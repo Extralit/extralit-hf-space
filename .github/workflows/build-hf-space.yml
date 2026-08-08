@@ -144,14 +144,30 @@ jobs:
           pip install -q 'huggingface_hub==1.26.0'
           python - <<'PY'
           import os
+          import time
 
-          from huggingface_hub import HfApi
+          from huggingface_hub import HfApi, SpaceStage
+
+          BUILD_STAGES = (
+              SpaceStage.BUILDING,
+              SpaceStage.RUNNING_BUILDING,
+              SpaceStage.APP_STARTING,
+              SpaceStage.RUNNING_APP_STARTING,
+          )
 
           space = os.environ["HF_SPACE_ID"]
+          api = HfApi()
           print(f"Factory-rebooting HF Space: {space}")
           # factory_reboot, else the `FROM` base is not re-pulled and v0.7.0 ships as 0.6.1.
-          runtime = HfApi().restart_space(space, factory_reboot=True)
+          started = api.restart_space(space, factory_reboot=True)
+          # wait_for_space returns at the first non-build poll, which is the stale RUNNING.
+          if started.stage not in BUILD_STAGES:
+              time.sleep(30)
+          runtime = api.wait_for_space(space, timeout=2700, poll_interval=10)
           print(f"Stage: {runtime.stage}")
+          # The reboot is async, so without this a BUILD_ERROR still reports a green deploy.
+          if runtime.stage != SpaceStage.RUNNING:
+              raise SystemExit(f"Deploy failed: {space} settled in {runtime.stage}")
           PY
 
   deploy-pr-space:
