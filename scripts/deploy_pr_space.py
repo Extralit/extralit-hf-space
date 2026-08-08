@@ -21,9 +21,9 @@ Configuration is read entirely from environment variables:
 
 from __future__ import annotations
 
-import json
 import os
 
+from hf_space import filter_prefixed
 from huggingface_hub import HfApi
 from huggingface_hub.errors import RepositoryNotFoundError
 
@@ -40,15 +40,6 @@ license: apache-2.0
 hf_oauth: true
 ---
 """
-
-
-def _filter_extralit(raw: str) -> dict[str, str]:
-    """Parse a JSON object of env vars and keep only the ``EXTRALIT_*`` keys."""
-    try:
-        data = json.loads(raw) if raw else {}
-    except json.JSONDecodeError:
-        data = {}
-    return {k: v for k, v in data.items() if k.startswith("EXTRALIT_")}
 
 
 def main() -> None:
@@ -80,8 +71,8 @@ def main() -> None:
             commit_message="Enable HF OAuth",
         )
 
-    space_secrets = _filter_extralit(os.environ.get("ALL_SECRETS", ""))
-    space_vars = _filter_extralit(os.environ.get("ALL_VARS", ""))
+    space_secrets = filter_prefixed(os.environ.get("ALL_SECRETS", ""), "EXTRALIT_")
+    space_vars = filter_prefixed(os.environ.get("ALL_VARS", ""), "EXTRALIT_")
 
     for key in sorted(space_secrets):
         api.add_space_secret(repo_id=target, key=key, value=space_secrets[key], description="from CI staging env")

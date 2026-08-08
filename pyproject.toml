@@ -23,7 +23,13 @@ packages = ["extralit_ocr"]
 dev = [
     "ruff",
     "rq-dashboard",
+    "pytest",
+    # Matches the version the deploy jobs pip-install, so tests hit the same API surface.
+    "huggingface_hub==1.26.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.ruff]
 exclude = [

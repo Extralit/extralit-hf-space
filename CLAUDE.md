@@ -137,6 +137,28 @@ not at the top of the file** — every job here matches the publisher's repo/bra
 claims, so a workflow-level grant would hand `deploy-pr-space` the ability to mint a
 production token.
 
+### Update vs. create — the split that keeps production config alive
+
+Both deploy jobs share `scripts/hf_space.py`, but they are allowed to write different things:
+
+| Path | Operation | May write |
+| --- | --- | --- |
+| `deploy-space` (prod/staging) | **update** an existing Space | the `Dockerfile` `FROM` line, and nothing else |
+| `deploy-pr-space` (previews) | **create**, then update | the full template on create; the `FROM` line thereafter |
+
+**`deploy-space` must never render a template.** `.oauth.yaml` is not in this repo — it lives
+only in the Space repos, and its `allowed_workspaces` differ per Space (`public-demo`:
+`itn-recalibration`, `extralit`; `develop`: `public`, `test`). Rendering would wipe those and
+the README frontmatter, and the Space would still reach `RUNNING` and the job would still go
+green — the same silent-wrong-result class the digest pin exists to prevent. It would also
+destroy `deploy_pinned_image`'s `after == before` skip branch, putting every no-op redeploy
+behind a 45-minute `wait_for_space`.
+
+`scripts/` is on `sys.path[0]` for anything run as `python scripts/<name>.py`, which is how
+`import hf_space` resolves with no packaging. **Never add `scripts/secrets.py`,
+`scripts/types.py`, or `scripts/logging.py`** — the same mechanism would shadow those stdlib
+modules for `huggingface_hub`'s transitive dependencies.
+
 **Variables and secrets differ here.** Adding an `EXTRALIT_*` environment *variable* is all
 it takes to reach a preview — the whole `vars` set is passed through. An `EXTRALIT_*`
 *secret* must additionally be named in `build-hf-space.yml`'s `ALL_SECRETS` object. The
