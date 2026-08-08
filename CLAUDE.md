@@ -173,6 +173,13 @@ runtime; `scripts/start.sh` re-exports them as the `OAUTH2_HUGGINGFACE_*` names 
 expects. The one exception is the source Space `extralit-dev/develop`, whose *custom* OAuth
 app is pinned to its own callback URL and therefore does not carry over to previews.
 
+`hf_oauth: true` is only half of it. Those injected variables are consumed only if the image
+contains `/home/extralit/.oauth.yaml` — `SecuritySettings` falls through to a bare
+`OAuth2Settings()` when the file is missing, and `_build_providers({}, [])` returns no
+providers, so the server registers nothing and the login button never appears. The file is
+put there by the `COPY .oauth.yaml /home/extralit/` line in each Space's own `Dockerfile`,
+which is why nothing may replace that file wholesale — only the `FROM` line is rewritten.
+
 
 **HF Spaces Production (`extralit-hf-space/`):**
 ```bash

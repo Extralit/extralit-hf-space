@@ -179,9 +179,10 @@ jobs:
           # Irreducible: Trusted Publishers cannot create repos, and duplicate_space does.
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           PR_SPACE_SLUG: ${{ needs.resolve-env.outputs.pr_space_slug }}
-          IMAGE_TAG: ${{ needs.resolve-env.outputs.image_tag }}
           # Same source `build` pushed to; hardcoding allows deploying a never-built image.
           DOCKER_REPO: ${{ vars.DOCKER_REPO }}
+          # `:pr-N` is re-pushed every build, so a tag here lets HF reuse a stale base.
+          IMAGE_DIGEST: ${{ needs.build.outputs.image_digest }}
           # List EXTRALIT_* secrets one at a time; `toJSON(secrets)` tripped GitHub's detector.
           ALL_SECRETS: "{}"
           # Variables are not credentials, so the whole set is safe to pass.

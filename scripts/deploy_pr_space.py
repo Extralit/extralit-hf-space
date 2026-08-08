@@ -12,10 +12,13 @@ Flow:
      -> Space variables. Strictly filtered to ``EXTRALIT_*`` so ``HF_TOKEN`` / ``DOCKER_*``
      / the GitHub token are never pushed. Done BEFORE the Dockerfile upload so the first
      build already has the env present.
-  3. Upload a one-line ``Dockerfile`` pinning the Space to the PR's image tag.
+  3. Rewrite the Space's ``Dockerfile`` ``FROM`` line to the digest ``build`` just pushed,
+     then wait for the rebuild to settle. Only that line — the rest of the file comes from
+     ``SOURCE_SPACE`` and carries ``COPY .oauth.yaml``, without which the server registers
+     no OAuth provider and ``hf_oauth: true`` is inert.
 
 Configuration is read entirely from environment variables:
-  HF_TOKEN, SOURCE_SPACE, PR_SPACE_SLUG, DOCKER_REPO, IMAGE_TAG,
+  HF_TOKEN, SOURCE_SPACE, PR_SPACE_SLUG, DOCKER_REPO, IMAGE_DIGEST,
   ALL_SECRETS / ALL_VARS  (JSON objects, typically ``toJSON(secrets)``/``toJSON(vars)``).
 """
 
@@ -23,7 +26,7 @@ from __future__ import annotations
 
 import os
 
-from hf_space import filter_prefixed
+from hf_space import deploy_pinned_image, filter_prefixed
 from huggingface_hub import HfApi
 from huggingface_hub.errors import RepositoryNotFoundError
 
@@ -47,8 +50,8 @@ def main() -> None:
     source = os.environ["SOURCE_SPACE"]
     org = source.split("/")[0]
     target = f"{org}/{os.environ['PR_SPACE_SLUG']}"
-    docker_repo = os.environ["DOCKER_REPO"]
-    image_tag = os.environ["IMAGE_TAG"]
+    # A digest, not `:pr-N`: that tag is re-pushed every build, so HF can reuse a stale base.
+    image_ref = f"{os.environ['DOCKER_REPO']}@{os.environ['IMAGE_DIGEST']}"
 
     try:
         api.space_info(target)
@@ -82,15 +85,7 @@ def main() -> None:
         print(f"  variable -> {key}")
     print(f"Synced {len(space_secrets)} secret(s) + {len(space_vars)} variable(s) to {target}")
 
-    dockerfile = f"FROM {docker_repo}:{image_tag}\n"
-    api.upload_file(
-        path_or_fileobj=dockerfile.encode(),
-        path_in_repo="Dockerfile",
-        repo_id=target,
-        repo_type="space",
-        commit_message=f"Deploy {docker_repo}:{image_tag}",
-    )
-    print(f"Deployed {target} -> {docker_repo}:{image_tag}")
+    deploy_pinned_image(api, target, image_ref)
     print(f"URL: https://huggingface.co/spaces/{target}")
 
 
