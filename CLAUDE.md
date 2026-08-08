@@ -117,12 +117,25 @@ there only because `duplicate_space()` **creates** `extralit-dev/pr-N`, and a tr
 publisher can only be registered on a repo that already exists. So it is `extralit-dev`-only
 by construction; no stored credential can reach `extralit/public-demo`.
 
-Two traps when editing that job. The `id-token: write` grant belongs on **`deploy-space`,
+**`deploy-space` deploys by committing, not by restarting.** It rewrites the Space's
+`Dockerfile` `FROM` line to the **digest** the `build` job just pushed and commits that; HF
+rebuilds on the new commit. Two independent reasons it works this way, and neither is
+negotiable:
+
+1. **`POST /api/spaces/…/restart` rejects OIDC tokens with a 401.** A repo publisher grants
+   *write access to the repo*; restarting is a runtime operation, not a repo write. Commits
+   are what the credential is actually for. (The exchange itself succeeds — a 401 here comes
+   from the restart endpoint, not from auth setup. A misconfigured publisher fails earlier and
+   differently, as `OIDCError`/`invalid_grant`.)
+2. **A digest cannot go stale.** These Spaces are a thin `FROM <pushed image>`; when that
+   line was a *tag*, HF reused the base image it had already built and shipped v0.7.0 as
+   0.6.1 with a green job. Changed content forces a real rebuild, which is why no
+   `factory_reboot` equivalent is needed anymore.
+
+The one trap when editing the job: the `id-token: write` grant belongs on **`deploy-space`,
 not at the top of the file** — every job here matches the publisher's repo/branch/workflow
 claims, so a workflow-level grant would hand `deploy-pr-space` the ability to mint a
-production token. And the restart must stay `factory_reboot=True`: a plain restart reuses
-the image HF already built without re-pulling the `FROM` base, which ships a green deploy of
-the previous version (that was v0.7.0).
+production token.
 
 **Variables and secrets differ here.** Adding an `EXTRALIT_*` environment *variable* is all
 it takes to reach a preview — the whole `vars` set is passed through. An `EXTRALIT_*`
