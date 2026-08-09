@@ -70,12 +70,12 @@ def workspaces_value(names) -> str:
 def render_space_files(template_dir, variables: dict[str, str]) -> dict[str, str]:
     """Render every file ``manifest.json`` lists, keyed by its path in the Space repo."""
     root = Path(template_dir)
-    manifest = json.loads((root / "manifest.json").read_text())
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     values = {**manifest.get("defaults", {}), **variables}
     missing = sorted(set(manifest["variables"]) - set(values))
     if missing:
         raise KeyError(f"Template variables without a value: {missing}")
-    return {name: render((root / name).read_text(), values) for name in manifest["files"]}
+    return {name: render((root / name).read_text(encoding="utf-8"), values) for name in manifest["files"]}
 
 
 def deploy_pinned_image(api, space_id: str, image_ref: str):
@@ -83,7 +83,7 @@ def deploy_pinned_image(api, space_id: str, image_ref: str):
 
     Commit-to-rebuild, not ``restart_space``: the restart API rejects OIDC tokens with a 401.
     """
-    with open(api.hf_hub_download(space_id, "Dockerfile", repo_type="space")) as fh:
+    with open(api.hf_hub_download(space_id, "Dockerfile", repo_type="space"), encoding="utf-8") as fh:
         before = fh.read()
     after = pin_dockerfile(before, image_ref)
 

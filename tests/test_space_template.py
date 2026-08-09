@@ -31,18 +31,18 @@ def test_render_leaves_dockerfile_arg_syntax_alone():
 
 
 def test_manifest_declares_every_placeholder_used_by_the_template():
-    manifest = json.loads((TEMPLATE_DIR / "manifest.json").read_text())
+    manifest = json.loads((TEMPLATE_DIR / "manifest.json").read_text(encoding="utf-8"))
     declared = set(manifest["variables"])
 
     used = set()
     for name in manifest["files"]:
-        used |= set(_placeholders((TEMPLATE_DIR / name).read_text()))
+        used |= set(_placeholders((TEMPLATE_DIR / name).read_text(encoding="utf-8")))
 
     assert used == declared
 
 
 def test_manifest_carries_no_required_secrets():
-    manifest = json.loads((TEMPLATE_DIR / "manifest.json").read_text())
+    manifest = json.loads((TEMPLATE_DIR / "manifest.json").read_text(encoding="utf-8"))
 
     # That contract lives in the Hub's `deployment_templates.required_secrets`. A second
     # copy here has no seeder, and the drift shows up as a Space missing a secret.
@@ -93,5 +93,5 @@ def test_rendered_readme_frontmatter_is_valid_yaml():
 def test_unrendered_template_is_itself_parseable_yaml():
     # `__VAR__` is a plain scalar; `{{VAR}}` would be a flow mapping and fail pre-commit's
     # check-yaml, which runs with no path filters.
-    yaml.safe_load((TEMPLATE_DIR / ".oauth.yaml").read_text())
-    yaml.safe_load((TEMPLATE_DIR / "README.md").read_text().split("---")[1])
+    yaml.safe_load((TEMPLATE_DIR / ".oauth.yaml").read_text(encoding="utf-8"))
+    yaml.safe_load((TEMPLATE_DIR / "README.md").read_text(encoding="utf-8").split("---")[1])

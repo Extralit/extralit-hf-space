@@ -103,7 +103,7 @@ def _fetch(api: HfApi, space_id: str, names) -> dict[str, str]:
     live = {}
     for name in names:
         try:
-            live[name] = Path(api.hf_hub_download(space_id, name, repo_type="space")).read_text()
+            live[name] = Path(api.hf_hub_download(space_id, name, repo_type="space")).read_text(encoding="utf-8")
         except EntryNotFoundError:
             continue
     return live
