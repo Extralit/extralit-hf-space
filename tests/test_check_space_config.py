@@ -53,6 +53,29 @@ def test_dockerfile_drift_below_the_from_line_is_reported():
     assert list(drift) == ["Dockerfile"]
 
 
+def test_a_dockerfile_without_a_from_line_is_reported():
+    # pin_dockerfile raises on this, so the deploy job would hard-fail; say so here first.
+    live = dict(RENDERED, **{"Dockerfile": "COPY .oauth.yaml /home/extralit/\n"})
+
+    drift = check.compare(RENDERED, live)
+
+    assert list(drift) == ["Dockerfile"]
+    assert "no FROM line" in drift["Dockerfile"][0]
+
+
+def test_an_extra_later_stage_from_is_reported():
+    # Only the first FROM is CI's to own. Dropping every FROM would normalize this to the
+    # expected body and report no drift on a Space that grew a second build stage.
+    live = dict(
+        RENDERED,
+        **{"Dockerfile": "FROM repo@sha256:bbb\n\nCOPY .oauth.yaml /home/extralit/\nFROM scratch\n"},
+    )
+
+    drift = check.compare(RENDERED, live)
+
+    assert list(drift) == ["Dockerfile"]
+
+
 def test_a_file_missing_from_the_live_space_is_drift():
     live = {k: v for k, v in RENDERED.items() if k != ".oauth.yaml"}
 

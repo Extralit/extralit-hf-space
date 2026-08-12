@@ -89,12 +89,19 @@ class FakeRuntime:
 
 
 class FakeApi:
-    """Records calls so the skip branch can be asserted without mocking libraries."""
+    """Records calls so the branch taken can be asserted without mocking libraries.
 
-    def __init__(self, tmp_path, dockerfile):
+    ``stages`` is consumed one entry per ``get_space_runtime`` poll, the last one repeating,
+    which is what lets a test replay "the Hub still reports the pre-commit stage".
+    """
+
+    def __init__(self, tmp_path, dockerfile, stages=(SpaceStage.RUNNING,), settled=SpaceStage.RUNNING):
         self._path = tmp_path / "Dockerfile"
         self._path.write_text(dockerfile)
+        self._stages = list(stages)
+        self._settled = settled
         self.uploads = []
+        self.polls = 0
         self.waits = 0
 
     def hf_hub_download(self, repo_id, filename, repo_type=None):
@@ -105,11 +112,17 @@ class FakeApi:
         self._path.write_text(path_or_fileobj.decode())
 
     def get_space_runtime(self, repo_id):
-        return FakeRuntime(SpaceStage.RUNNING)
+        self.polls += 1
+        return FakeRuntime(self._stages.pop(0) if len(self._stages) > 1 else self._stages[0])
 
     def wait_for_space(self, repo_id, timeout=None, poll_interval=None):
         self.waits += 1
-        return FakeRuntime(SpaceStage.RUNNING)
+        return FakeRuntime(self._settled)
+
+
+@pytest.fixture
+def instant_sleep(monkeypatch):
+    monkeypatch.setattr("hf_space.time.sleep", lambda _seconds: None)
 
 
 def test_deploy_pinned_image_skips_upload_and_wait_when_already_pinned(tmp_path):
@@ -123,9 +136,20 @@ def test_deploy_pinned_image_skips_upload_and_wait_when_already_pinned(tmp_path)
     assert runtime.stage == SpaceStage.RUNNING
 
 
-def test_deploy_pinned_image_uploads_and_waits_when_the_digest_changed(tmp_path, monkeypatch):
-    monkeypatch.setattr("hf_space.time.sleep", lambda _seconds: None)
-    api = FakeApi(tmp_path, PUBLIC_DEMO_DOCKERFILE)
+def test_deploy_pinned_image_waits_when_already_pinned_but_still_building(tmp_path):
+    # The create path: the rendered template pinned the digest, so the commit that triggered
+    # the build was the template upload, not this one. Reporting mid-build would be a lie.
+    already = pin_dockerfile(PUBLIC_DEMO_DOCKERFILE, DIGEST_PIN)
+    api = FakeApi(tmp_path, already, stages=(SpaceStage.BUILDING,))
+
+    deploy_pinned_image(api, "extralit-dev/pr-42", DIGEST_PIN)
+
+    assert api.uploads == []
+    assert api.waits == 1
+
+
+def test_deploy_pinned_image_uploads_and_waits_when_the_digest_changed(tmp_path, instant_sleep):
+    api = FakeApi(tmp_path, PUBLIC_DEMO_DOCKERFILE, stages=(SpaceStage.BUILDING,))
 
     deploy_pinned_image(api, "extralit/public-demo", DIGEST_PIN)
 
@@ -135,10 +159,48 @@ def test_deploy_pinned_image_uploads_and_waits_when_the_digest_changed(tmp_path,
     assert api.waits == 1
 
 
-def test_deploy_pinned_image_raises_when_the_space_does_not_settle_running(tmp_path, monkeypatch):
-    monkeypatch.setattr("hf_space.time.sleep", lambda _seconds: None)
-    api = FakeApi(tmp_path, PUBLIC_DEMO_DOCKERFILE)
-    api.wait_for_space = lambda repo_id, timeout=None, poll_interval=None: FakeRuntime(SpaceStage.BUILD_ERROR)
+def test_deploy_pinned_image_does_not_accept_the_stage_from_before_the_commit(tmp_path, instant_sleep):
+    # The Hub reports the pre-commit RUNNING for two polls before scheduling the build. Waiting
+    # straight away would return that stale RUNNING and green-light the previous image.
+    api = FakeApi(
+        tmp_path,
+        PUBLIC_DEMO_DOCKERFILE,
+        stages=(SpaceStage.RUNNING, SpaceStage.RUNNING, SpaceStage.BUILDING),
+    )
 
-    with pytest.raises(RuntimeError):
+    deploy_pinned_image(api, "extralit/public-demo", DIGEST_PIN)
+
+    assert api.polls == 3
+    assert api.waits == 1
+
+
+def test_deploy_pinned_image_raises_when_the_rebuild_never_starts(tmp_path, instant_sleep):
+    api = FakeApi(tmp_path, PUBLIC_DEMO_DOCKERFILE, stages=(SpaceStage.RUNNING,))
+
+    with pytest.raises(RuntimeError, match="never started building"):
         deploy_pinned_image(api, "extralit/public-demo", DIGEST_PIN)
+
+    assert api.waits == 0
+
+
+def test_deploy_pinned_image_raises_when_the_space_does_not_settle_running(tmp_path, instant_sleep):
+    api = FakeApi(
+        tmp_path,
+        PUBLIC_DEMO_DOCKERFILE,
+        stages=(SpaceStage.BUILDING,),
+        settled=SpaceStage.BUILD_ERROR,
+    )
+
+    with pytest.raises(RuntimeError, match="settled in"):
+        deploy_pinned_image(api, "extralit/public-demo", DIGEST_PIN)
+
+
+def test_deploy_pinned_image_accepts_a_space_that_built_then_went_to_sleep(tmp_path, instant_sleep):
+    # SLEEPING is absent from SpaceStage in huggingface_hub 1.26.0, so it arrives as a bare
+    # string; extralit-dev/develop sits in it between deploys. It is a built Space, not a
+    # failed one, and rejecting it would fail the deploy that just succeeded.
+    api = FakeApi(tmp_path, PUBLIC_DEMO_DOCKERFILE, stages=(SpaceStage.BUILDING,), settled="SLEEPING")
+
+    runtime = deploy_pinned_image(api, "extralit-dev/develop", DIGEST_PIN)
+
+    assert runtime.stage == "SLEEPING"

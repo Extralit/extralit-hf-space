@@ -99,6 +99,12 @@ def test_main_renders_the_template_over_the_duplicated_config(env, monkeypatch):
     assert oauth["allowed_workspaces"] == [{"name": "public"}, {"name": "test"}]
     assert oauth["providers"] == [{"name": "huggingface"}]
 
+    # Rendered, not inherited: the copy would otherwise carry the source Space's Dockerfile.
+    # It arrives already pinned to the digest, and must keep the line that makes OAuth work.
+    dockerfile = written["Dockerfile"]
+    assert dockerfile.splitlines()[0] == "FROM extralitdev/extralit-hf-space@sha256:" + "c" * 64
+    assert "COPY .oauth.yaml /home/extralit/" in dockerfile
+
 
 def test_main_leaves_an_existing_preview_config_alone(env, monkeypatch):
     api = FakeApi(exists=True)

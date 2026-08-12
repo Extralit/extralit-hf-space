@@ -67,9 +67,18 @@ def _frontmatter(text: str) -> dict:
     return front
 
 
-def _below_from(text: str) -> str:
-    body = [line for line in text.splitlines() if not line.startswith("FROM ")]
-    return "\n".join(body).strip()
+def _below_from(text: str) -> str | None:
+    """Drop only the first ``FROM`` line — the digest CI owns — or ``None`` if there is none.
+
+    Dropping every ``FROM`` would hide two real breakages, because ``pin_dockerfile`` rewrites
+    just the first: a Space carrying an extra later-stage ``FROM``, and one carrying none at
+    all (which makes the deploy job raise rather than pin).
+    """
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith("FROM "):
+            return "\n".join(lines[:index] + lines[index + 1 :]).strip()
+    return None
 
 
 def _diff_mappings(expected: dict, actual: dict) -> list[str]:
@@ -93,7 +102,11 @@ def compare(rendered: dict[str, str], live: dict[str, str]) -> dict[str, list[st
             messages = _diff_mappings(yaml.safe_load(expected) or {}, yaml.safe_load(live[name]) or {})
         else:
             # The FROM line is a digest the deploy job owns, so it is expected to differ.
-            messages = [] if _below_from(expected) == _below_from(live[name]) else ["differs below the FROM line"]
+            body = _below_from(live[name])
+            if body is None:
+                messages = ["no FROM line — deploy_pinned_image cannot pin this Space"]
+            else:
+                messages = [] if body == _below_from(expected) else ["differs below the FROM line"]
         if messages:
             drift[name] = messages
     return drift

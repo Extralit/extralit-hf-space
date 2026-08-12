@@ -13,10 +13,10 @@ Flow:
      -> Space variables. Strictly filtered to ``EXTRALIT_*`` so ``HF_TOKEN`` / ``DOCKER_*``
      / the GitHub token are never pushed. Done BEFORE the Dockerfile upload so the first
      build already has the env present.
-  3. Rewrite the Space's ``Dockerfile`` ``FROM`` line to the digest ``build`` just pushed,
-     then wait for the rebuild to settle. Only that line — the rest of the file comes from
-     ``SOURCE_SPACE`` and carries ``COPY .oauth.yaml``, without which the server registers
-     no OAuth provider and ``hf_oauth: true`` is inert.
+  3. Settle the build. On create the rendered Dockerfile already carries the digest, so this
+     only waits; on later runs it rewrites the ``FROM`` line and waits for that rebuild. Only
+     that line is ever rewritten — the rest of the file carries ``COPY .oauth.yaml``, without
+     which the server registers no OAuth provider and ``hf_oauth: true`` is inert.
 
 Configuration is read entirely from environment variables:
   HF_TOKEN, SOURCE_SPACE, PR_SPACE_SLUG, DOCKER_REPO, IMAGE_DIGEST,
@@ -35,9 +35,9 @@ from huggingface_hub.errors import RepositoryNotFoundError
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "space_template"
 # Mirrors SOURCE_SPACE's own allowlist; the server creates these at startup if absent.
 PR_WORKSPACES = ["public", "test"]
-# The Dockerfile is rendered by deploy_pinned_image instead, so its upload is the one that
-# triggers the rebuild this job then waits on.
-CREATE_FILES = ["README.md", ".oauth.yaml"]
+# Every file the manifest declares: a duplicate inherits SOURCE_SPACE's, so anything left out
+# here silently carries that Space's drift into the preview instead of the committed template.
+CREATE_FILES = ["README.md", ".oauth.yaml", "Dockerfile"]
 
 
 def main() -> None:

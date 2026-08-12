@@ -10,7 +10,7 @@ Flow:
   2. Rewrite its ``FROM`` line to ``DOCKER_REPO@IMAGE_DIGEST`` — the *only* line touched, so
      the Space's own ``COPY .oauth.yaml`` / ``ENV`` lines and README stay as they are. This
      job updates an existing Space; it must never render a template over one.
-  3. Commit if that changed anything, then wait for the rebuild to settle in ``RUNNING``.
+  3. Commit if that changed anything, then wait for the rebuild to start and settle.
 
 Configuration is read entirely from environment variables:
   HF_SPACE_ID, DOCKER_REPO, IMAGE_DIGEST

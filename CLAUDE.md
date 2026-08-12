@@ -154,6 +154,19 @@ green — the same silent-wrong-result class the digest pin exists to prevent. I
 destroy `deploy_pinned_image`'s `after == before` skip branch, putting every no-op redeploy
 behind a 45-minute `wait_for_space`.
 
+**Waiting is two steps, and collapsing them re-opens the bug.** `deploy_pinned_image` polls
+until it sees a *build* stage before calling `wait_for_space`, because `wait_for_space` returns
+at the first non-build poll — which, in the seconds before the Hub schedules the commit's
+build, is still the stage from *before* it. Waiting directly would green-light the previous
+image. There is nothing cheaper to check: the runtime API reports no revision (`stage`,
+`hardware`, `gcTimeout`, `replicas`, `devMode`, `domains`), so an observed build transition is
+the only available proof the commit took effect.
+
+**`SLEEPING` counts as success.** It is absent from `SpaceStage` in `huggingface_hub` 1.26.0,
+so it arrives as a bare string, and it is where an idle Space sits between deploys
+(`gcTimeout` is 48h) — `extralit-dev/develop` is usually in it. It means the build succeeded
+and the Space was later garbage-collected, so rejecting it fails a deploy that worked.
+
 `scripts/` is on `sys.path[0]` for anything run as `python scripts/<name>.py`, which is how
 `import hf_space` resolves with no packaging. **Never add `scripts/secrets.py`,
 `scripts/types.py`, or `scripts/logging.py`** — the same mechanism would shadow those stdlib
