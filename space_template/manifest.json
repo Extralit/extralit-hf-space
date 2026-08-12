@@ -1,0 +1,24 @@
+{
+  "files": ["README.md", "Dockerfile", ".oauth.yaml"],
+  "variables": [
+    "TITLE",
+    "EMOJI",
+    "COLOR_FROM",
+    "COLOR_TO",
+    "LICENSE",
+    "TAGS",
+    "HF_OAUTH",
+    "WORKSPACES",
+    "IMAGE_REF"
+  ],
+  "defaults": {
+    "TITLE": "Extralit",
+    "EMOJI": "💻",
+    "COLOR_FROM": "purple",
+    "COLOR_TO": "red",
+    "LICENSE": "apache-2.0",
+    "TAGS": "[data extraction, literature review, llm]",
+    "HF_OAUTH": "true",
+    "WORKSPACES": "[{name: default}]"
+  }
+}

@@ -1,0 +1,8 @@
+# Change to `false` to disable HF auth integration
+enabled: true
+
+providers:
+  - name: huggingface
+
+# Workspaces are created at startup if they do not exist yet.
+allowed_workspaces: __WORKSPACES__

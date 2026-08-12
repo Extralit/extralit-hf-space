@@ -164,6 +164,61 @@ docker build -t extralit-hf-space .
 docker run -p 80:80 extralit-hf-space
 ```
 
+## ⚙️ GitHub Workflows
+
+Three workflows cover this repository. One builds the image and deploys the live Spaces, one boots the container and health-checks it, and one guards the Space configuration.
+
+### Building and deploying (`build-hf-space.yml`)
+
+The monorepo's release pipeline drives this workflow through a `repository_dispatch` of type `build-hf-space`. There is no `push` trigger, so merging to `main` deploys nothing on its own; a manual `workflow_dispatch` always produces a staging build.
+
+**Inputs** arrive in the dispatch `client_payload`:
+
+| Field | Example | Effect |
+| --- | --- | --- |
+| `tag` | `v0.7.0`, `main` | Docker tag to build and push |
+| `branch` | `main`, `214/merge` | Chooses staging or a preview Space |
+| `is_release` | `true` / `false` | The only production signal |
+
+**Routing** happens in the `resolve-env` job. Branch names never select production; only `is_release` does, so a stray payload cannot reach the public demo.
+
+| Input | Environment | `:latest` | Platforms | Target Space |
+| --- | --- | :---: | --- | --- |
+| `is_release=true` | `production` | yes | amd64 + arm64 | `extralit/public-demo` |
+| `branch=main` | `staging` | yes | amd64 | `extralit-dev/develop` |
+| any other branch | `staging` | no | amd64 | `extralit-dev/pr-N` |
+| `workflow_dispatch` | `staging` | per ref | amd64 | per ref |
+
+**Outputs** are a multi-platform image on Docker Hub (`extralit/extralit-hf-space` for production, `extralitdev/extralit-hf-space` for staging) and a one-line commit to the target Space that repoints its `Dockerfile` `FROM` at the **image digest**, not a tag. A re-pushed tag lets HuggingFace reuse a base it has already built, which once shipped v0.7.0 while the Space still served 0.6.1. The job then blocks until the rebuild settles, so a `BUILD_ERROR` fails the run instead of reporting a green deploy.
+
+`deploy-space` carries no HuggingFace credential. It authenticates through [Trusted Publishers](https://huggingface.co/docs/hub/en/trusted-publishers), exchanging a GitHub OIDC token for one scoped to a single Space for an hour. The `id-token: write` grant sits on that job alone, so no other job can mint a production token.
+
+**Configuration** is scoped per GitHub environment:
+
+| Name | Kind | `production` | `staging` |
+| --- | --- | --- | --- |
+| `HF_SPACE_ID` | variable | `extralit/public-demo` | `extralit-dev/develop` |
+| `DOCKER_REPO` | variable | `extralit/extralit-hf-space` | `extralitdev/extralit-hf-space` |
+| `EXTRALIT_SERVER_IMAGE` | variable | `extralit/extralit-server` | `extralitdev/extralit-server` |
+| `DOCKER_USERNAME` / `DOCKER_PASSWORD` | secret | yes | yes |
+| `HF_TOKEN` | secret | none | preview Spaces only |
+
+`HF_TOKEN` survives only on `staging`. Trusted Publishers scope a token to a repository that already exists, and `duplicate_space()` creates `extralit-dev/pr-N` on demand, so preview creation cannot go keyless. Nothing stored anywhere in this repository can reach the production org.
+
+Preview Spaces get more than a retagged image. Duplicating copies files but not secrets or variables, so the job forwards the `staging` environment's `EXTRALIT_*` config onto the new Space and renders `README.md`, `.oauth.yaml`, and the `Dockerfile` from `space_template/`. Without that render the preview would inherit the source Space's workspace allowlist.
+
+### Testing the container (`integration-test.yml`)
+
+Pull requests and pushes touching `extralit_ocr/`, `scripts/`, `config/`, or the `Procfile` build the image and run it. The job waits for `/api/v1/status` to answer, checks the response parses as a JSON object, and probes the workspaces endpoint. It times out after 10 minutes and dumps container logs on failure.
+
+### Guarding the Space config (`space-config.yml`)
+
+Two jobs, neither of which may ever be given `id-token: write`.
+
+`unit-tests` runs `pytest` on any change to `scripts/`, `tests/`, `space_template/`, or `pyproject.toml`. It covers the pure logic that the deploy path depends on: the `FROM` rewrite preserving `COPY .oauth.yaml`, the `EXTRALIT_*` secret filter, and the stage handling that decides whether a Space actually rebuilt.
+
+`drift` runs weekly and on demand. It renders `space_template/` against each live Space and reports the differences, reading anonymously because both Spaces are public. It never writes. The check exists because `.oauth.yaml` lives only in the Space repositories, so a hand edit is invisible to git and a deletion is otherwise unrecoverable.
+
 ## 🔗 Next Steps
 
 - **Learn More**: [Extralit Documentation](https://docs.extralit.ai/latest/getting_started/quickstart/)

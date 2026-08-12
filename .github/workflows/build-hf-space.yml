@@ -82,6 +82,9 @@ jobs:
     needs: resolve-env
     runs-on: ubuntu-latest
     environment: ${{ needs.resolve-env.outputs.env_name }}
+    outputs:
+      # Multi-platform builds yield the manifest-list digest, which is what `FROM` wants.
+      image_digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -114,6 +117,7 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Build & push Docker image
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -134,41 +138,25 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - name: Rebuild HF Space
+      # Pinned by SHA, not tag: this job holds the production OIDC token, so neither of its
+      # dependencies may be a moving target.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          sparse-checkout: scripts
+
+      - name: Pin HF Space to the image just built
         env:
           # Whole config for keyless auth; huggingface_hub exchanges it or raises OIDCError.
           HF_OIDC_RESOURCE: spaces/${{ vars.HF_SPACE_ID }}
           HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
+          DOCKER_REPO: ${{ vars.DOCKER_REPO }}
+          IMAGE_DIGEST: ${{ needs.build.outputs.image_digest }}
         run: |
           # Pinned: this step handles credentials, so its one dependency is not a moving target.
           pip install -q 'huggingface_hub==1.26.0'
-          python - <<'PY'
-          import os
-          import time
-
-          from huggingface_hub import HfApi, SpaceStage
-
-          BUILD_STAGES = (
-              SpaceStage.BUILDING,
-              SpaceStage.RUNNING_BUILDING,
-              SpaceStage.APP_STARTING,
-              SpaceStage.RUNNING_APP_STARTING,
-          )
-
-          space = os.environ["HF_SPACE_ID"]
-          api = HfApi()
-          print(f"Factory-rebooting HF Space: {space}")
-          # factory_reboot, else the `FROM` base is not re-pulled and v0.7.0 ships as 0.6.1.
-          started = api.restart_space(space, factory_reboot=True)
-          # wait_for_space returns at the first non-build poll, which is the stale RUNNING.
-          if started.stage not in BUILD_STAGES:
-              time.sleep(30)
-          runtime = api.wait_for_space(space, timeout=2700, poll_interval=10)
-          print(f"Stage: {runtime.stage}")
-          # The reboot is async, so without this a BUILD_ERROR still reports a green deploy.
-          if runtime.stage != SpaceStage.RUNNING:
-              raise SystemExit(f"Deploy failed: {space} settled in {runtime.stage}")
-          PY
+          python scripts/deploy_space.py
 
   deploy-pr-space:
     needs: [resolve-env, build]
@@ -191,9 +179,10 @@ jobs:
           # Irreducible: Trusted Publishers cannot create repos, and duplicate_space does.
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           PR_SPACE_SLUG: ${{ needs.resolve-env.outputs.pr_space_slug }}
-          IMAGE_TAG: ${{ needs.resolve-env.outputs.image_tag }}
           # Same source `build` pushed to; hardcoding allows deploying a never-built image.
           DOCKER_REPO: ${{ vars.DOCKER_REPO }}
+          # `:pr-N` is re-pushed every build, so a tag here lets HF reuse a stale base.
+          IMAGE_DIGEST: ${{ needs.build.outputs.image_digest }}
           # List EXTRALIT_* secrets one at a time; `toJSON(secrets)` tripped GitHub's detector.
           ALL_SECRETS: "{}"
           # Variables are not credentials, so the whole set is safe to pass.

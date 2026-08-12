@@ -1,0 +1,54 @@
+name: Space config
+
+# Read-only. Nothing here may be given `id-token: write` — the drift check reads the
+# production Space, and a token that can write it has no business in a reporting job.
+on:
+  push:
+    branches: [main]
+    # Not a YAML anchor — GitHub's workflow parser does not resolve aliases.
+    paths:
+      - "scripts/**"
+      - "tests/**"
+      - "space_template/**"
+      - "pyproject.toml"
+      - ".github/workflows/space-config.yml"
+  pull_request:
+    paths:
+      - "scripts/**"
+      - "tests/**"
+      - "space_template/**"
+      - "pyproject.toml"
+      - ".github/workflows/space-config.yml"
+  schedule:
+    # Weekly, so a Space edited by hand surfaces without waiting for the next deploy.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - run: pip install -q 'huggingface_hub==1.26.0' pytest pyyaml
+
+      - run: pytest
+
+  drift:
+    # The template is only honest if something compares it to the live Spaces.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - run: pip install -q 'huggingface_hub==1.26.0' pyyaml
+
+      # Anonymous: both Spaces are public, so the job needs no credential at all.
+      - run: python scripts/check_space_config.py
