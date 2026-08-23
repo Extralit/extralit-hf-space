@@ -15,10 +15,15 @@ Click the "Deploy to Spaces" button above to create your own Extralit instance. 
 #### Required for Data Persistence
 - **Persistent Storage**: Set to `SMALL` (otherwise data is lost on Space restart)
 - **Database**: `EXTRALIT_DATABASE_URL` - PostgreSQL connection string
-- **File Storage**: S3-compatible storage credentials:
-  - `S3_ENDPOINT`
-  - `S3_ACCESS_KEY`
-  - `S3_SECRET_KEY`
+- **File Storage** (optional): by default files land on the Space's persistent disk. To use
+  S3-compatible storage instead:
+  - `EXTRALIT_STORAGE_URL` - the whole storage root, e.g. `https://<ACCOUNT>.r2.cloudflarestorage.com/extralit`
+  - `EXTRALIT_S3_ACCESS_KEY`
+  - `EXTRALIT_S3_SECRET_KEY`
+
+  All three storage names carry the `EXTRALIT_` prefix — the server reads its settings
+  with `env_prefix = "EXTRALIT_"`, so an unprefixed `S3_ENDPOINT` is read by nothing. The
+  `OAUTH2_*` variables below are not settings and take no prefix; leave them as they are.
 
 #### OAuth Configuration
 - `OAUTH2_HUGGINGFACE_CLIENT_ID`
@@ -83,9 +88,12 @@ The Space automatically configures itself, but you can customize:
 
 #### Data Persistence
 - `EXTRALIT_DATABASE_URL` - PostgreSQL connection string
-- `S3_ENDPOINT` - S3-compatible storage endpoint
-- `S3_ACCESS_KEY` - Storage access key
-- `S3_SECRET_KEY` - Storage secret key
+- `EXTRALIT_STORAGE_URL` - object storage root: endpoint, bucket and key prefix together.
+  `s3://bucket/prefix`, `http(s)://host[:port]/bucket[/prefix]` for MinIO or R2, or
+  `file:///path`. Defaults to `/data/extralit/storage` on the Space's persistent disk.
+- `EXTRALIT_S3_ACCESS_KEY` - Storage access key (set with the secret key, or omit both)
+- `EXTRALIT_S3_SECRET_KEY` - Storage secret key (set with the access key, or omit both)
+- `EXTRALIT_S3_REGION` - Storage region (optional)
 
 #### Processing
 - `PDF_MARKDOWN_WRITE_DIR` - Directory for extracted markdown files
