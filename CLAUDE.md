@@ -86,7 +86,8 @@ extralit: sleep 30; /bin/bash start_extralit_server.sh
 
 **Production (Persistent Data):**
 - Configure external PostgreSQL database via `EXTRALIT_DATABASE_URL`
-- Configure S3-compatible storage via `S3_*` environment variables
+- Point `EXTRALIT_STORAGE_URL` at an S3-compatible bucket (or leave it unset to use the
+  Space's persistent disk)
 - Enable persistent storage in Space settings
 
 ### Configuration
@@ -98,10 +99,30 @@ that name is read by nothing.
 
 **Required for Persistence:**
 - `EXTRALIT_DATABASE_URL` - PostgreSQL connection string
-- `EXTRALIT_S3_ENDPOINT` - S3-compatible storage endpoint
-- `EXTRALIT_S3_ACCESS_KEY` - Storage access key
-- `EXTRALIT_S3_SECRET_KEY` - Storage secret key
+- `EXTRALIT_STORAGE_URL` - root of object storage; every workspace is a prefix under it
+- `EXTRALIT_S3_ACCESS_KEY` - Storage access key (pair with the secret, or omit both)
+- `EXTRALIT_S3_SECRET_KEY` - Storage secret key (pair with the access key, or omit both)
 - `EXTRALIT_S3_REGION` - Storage region (optional)
+
+`EXTRALIT_STORAGE_URL` names the whole root — endpoint, bucket *and* key prefix — not just
+the endpoint that `EXTRALIT_S3_ENDPOINT` used to carry:
+
+| URL | Backend |
+|---|---|
+| unset | disk under `{EXTRALIT_HOME_PATH}/storage`, i.e. `/data/extralit/storage` on a Space |
+| `file:///data/extralit/storage` | disk, named explicitly |
+| `http://minio:9000/extralit/prod` | MinIO or any S3-compatible endpoint, path-style |
+| `https://<ACCOUNT>.r2.cloudflarestorage.com/extralit` | Cloudflare R2 |
+| `s3://extralit/prod` | AWS |
+
+A remote URL with no bucket segment is a startup error. Credentials are optional: omit the
+key pair and the server falls back to obstore's own chain (IMDSv2, ECS task role, IRSA).
+
+**An unrecognized `EXTRALIT_S3_ENDPOINT` is ignored silently.** Nothing warns; the server
+falls back to the local-disk default and serves happily while the operator believes it is
+on S3. On a Space with persistent storage that looks like working software until someone
+notices the bucket is empty. If you are migrating a Space, rename the secret in the Space
+settings UI — no repository tooling can see or fix it for you.
 
 That shared prefix is load-bearing, not cosmetic: `scripts/deploy_pr_space.py` forwards
 exactly the `EXTRALIT_*` keys from the `staging` environment onto each preview Space.

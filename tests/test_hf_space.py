@@ -27,7 +27,7 @@ def test_filter_prefixed_keeps_only_the_prefix():
     raw = json.dumps(
         {
             "EXTRALIT_DATABASE_URL": "postgres://x",
-            "EXTRALIT_S3_ENDPOINT": "https://s3",
+            "EXTRALIT_STORAGE_URL": "s3://extralit",
             "HF_TOKEN": "hf_secret",
             "DOCKER_USERNAME": "user",
             "DOCKER_PASSWORD": "pw",
@@ -37,7 +37,7 @@ def test_filter_prefixed_keeps_only_the_prefix():
     )
     assert filter_prefixed(raw, "EXTRALIT_") == {
         "EXTRALIT_DATABASE_URL": "postgres://x",
-        "EXTRALIT_S3_ENDPOINT": "https://s3",
+        "EXTRALIT_STORAGE_URL": "s3://extralit",
     }
 
 

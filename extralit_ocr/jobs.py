@@ -9,7 +9,7 @@ from typing import Any
 from uuid import UUID
 
 from extralit_server.api.schemas.v1.document.metadata import DocumentProcessingMetadata, TextExtractionMetadata
-from extralit_server.contexts.files import download_file_content, get_s3_client
+from extralit_server.contexts.files import download_file_content, get_storage
 from extralit_server.database import AsyncSessionLocal
 from extralit_server.jobs.queues import OCR_QUEUE, REDIS_CONNECTION
 from extralit_server.models.database import Document
@@ -55,11 +55,8 @@ async def pymupdf_to_markdown_job(
 
     try:
         # Step 1: Download PDF from S3
-        client = await get_s3_client()
-        if client is None:
-            raise Exception("Failed to get storage client")
-
-        pdf_data = await download_file_content(client, s3_url)
+        storage = await get_storage()
+        pdf_data = await download_file_content(storage, s3_url)
 
         async with AsyncSessionLocal() as db:
             document: Document | None = await db.get(Document, document_id)

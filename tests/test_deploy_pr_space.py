@@ -49,7 +49,7 @@ def env(monkeypatch):
     monkeypatch.setenv("DOCKER_REPO", "extralitdev/extralit-hf-space")
     monkeypatch.setenv("IMAGE_DIGEST", "sha256:" + "c" * 64)
     monkeypatch.setenv("ALL_SECRETS", "{}")
-    monkeypatch.setenv("ALL_VARS", json.dumps({"EXTRALIT_S3_ENDPOINT": "https://s3", "DOCKER_REPO": "nope"}))
+    monkeypatch.setenv("ALL_VARS", json.dumps({"EXTRALIT_STORAGE_URL": "s3://extralit", "DOCKER_REPO": "nope"}))
 
 
 def _install(monkeypatch, api):
@@ -121,4 +121,4 @@ def test_main_still_propagates_only_extralit_vars(env, monkeypatch):
 
     deploy_pr_space.main()
 
-    assert api.variables == {"EXTRALIT_S3_ENDPOINT": "https://s3"}
+    assert api.variables == {"EXTRALIT_STORAGE_URL": "s3://extralit"}
