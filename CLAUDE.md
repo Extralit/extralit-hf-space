@@ -94,12 +94,16 @@ extralit: sleep 30; /bin/bash start_extralit_server.sh
 
 Server settings are `pydantic-settings` fields read with `env_prefix = "EXTRALIT_"` (see
 `extralit-server/src/extralit_server/settings.py` in the **`Extralit/extralit` monorepo**),
-so **every** knob below is spelled `EXTRALIT_*`. There is no unprefixed `S3_ENDPOINT` —
-that name is read by nothing.
+so **every server setting** below is spelled `EXTRALIT_*`. There is no unprefixed
+`S3_ENDPOINT` — that name is read by nothing. The `OAUTH2_*` variables are the exception
+that proves the rule: they are read by `os.getenv` in the provider, not by settings, so
+they carry no prefix.
 
-**Required for Persistence:**
-- `EXTRALIT_DATABASE_URL` - PostgreSQL connection string
-- `EXTRALIT_STORAGE_URL` - root of object storage; every workspace is a prefix under it
+**Persistence settings:**
+- `EXTRALIT_DATABASE_URL` - PostgreSQL connection string. **Required** for persistence;
+  without it the server runs on SQLite under `EXTRALIT_HOME_PATH`.
+- `EXTRALIT_STORAGE_URL` - root of object storage; every workspace is a prefix under it.
+  Optional — unset means the local disk described below.
 - `EXTRALIT_S3_ACCESS_KEY` - Storage access key (pair with the secret, or omit both)
 - `EXTRALIT_S3_SECRET_KEY` - Storage secret key (pair with the access key, or omit both)
 - `EXTRALIT_S3_REGION` - Storage region (optional)

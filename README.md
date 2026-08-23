@@ -21,8 +21,9 @@ Click the "Deploy to Spaces" button above to create your own Extralit instance. 
   - `EXTRALIT_S3_ACCESS_KEY`
   - `EXTRALIT_S3_SECRET_KEY`
 
-  Every name must carry the `EXTRALIT_` prefix — the server reads its settings with
-  `env_prefix = "EXTRALIT_"`, so an unprefixed `S3_ENDPOINT` is read by nothing.
+  All three storage names carry the `EXTRALIT_` prefix — the server reads its settings
+  with `env_prefix = "EXTRALIT_"`, so an unprefixed `S3_ENDPOINT` is read by nothing. The
+  `OAUTH2_*` variables below are not settings and take no prefix; leave them as they are.
 
 #### OAuth Configuration
 - `OAUTH2_HUGGINGFACE_CLIENT_ID`
