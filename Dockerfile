@@ -56,12 +56,16 @@ COPY config/elasticsearch.yml /etc/elasticsearch/elasticsearch.yml
 RUN --mount=from=ghcr.io/astral-sh/uv:0.12.6,source=/uv,target=/usr/local/bin/uv \
     --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=/packages/pyproject.toml \
-    UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=0 \
     uv pip install --python /opt/venv/bin/python /packages && \
     apt-get remove -y wget gnupg && \
     apt-get autoremove -y
 
 USER extralit
+
+# Without this a crash can take its own traceback down with it: the Space's logs are the only
+# way to see one, and honcho's pipes are not a tty, so Python block-buffers into them.
+ENV PYTHONUNBUFFERED=1
 
 # Environment variables for Elasticsearch
 ENV ELASTIC_CONTAINER=true
