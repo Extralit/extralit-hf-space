@@ -43,20 +43,33 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 RUN mkdir -p /data && chown extralit:extralit /data
 
-COPY scripts/start.sh /home/extralit/start.sh
-COPY Procfile /home/extralit/Procfile
-COPY pyproject.toml /packages/pyproject.toml
+COPY --chmod=0755 scripts/start.sh /home/extralit/start.sh
+COPY --chmod=0755 Procfile /home/extralit/Procfile
 COPY extralit_ocr /home/extralit/extralit_ocr
 COPY config/elasticsearch.yml /etc/elasticsearch/elasticsearch.yml
 
-# Install Python deps and clean up build dependencies
-RUN pip install --no-cache-dir /packages && \
-    chmod +x /home/extralit/start.sh /home/extralit/Procfile && \
+# These layer on top of the base image's /opt/venv, which already holds extralit-server.
+# `uv pip install`, never `uv sync`: sync makes the environment match a lockfile and would
+# uninstall every server package it does not know about. `--python` names the venv explicitly
+# rather than trusting VIRTUAL_ENV, so this keeps working against older base images.
+# `-r pyproject.toml` installs the dependencies only. Installing the path instead would build
+# this repo as a package, and `packages = ["extralit_ocr"]` is not under the mount — so it
+# produced a code-less dist and leaned on hatchling tolerating the missing directory.
+# extralit_ocr is imported from /home/extralit, never from site-packages.
+# uv is bind-mounted, so the build never carries a copy of it into the shipped layers.
+RUN --mount=from=ghcr.io/astral-sh/uv:0.12.6,source=/uv,target=/usr/local/bin/uv \
+    --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=pyproject.toml,target=/packages/pyproject.toml \
+    UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=0 \
+    uv pip install --python /opt/venv/bin/python -r /packages/pyproject.toml && \
     apt-get remove -y wget gnupg && \
-    apt-get autoremove -y && \
-    rm -rf /packages
+    apt-get autoremove -y
 
 USER extralit
+
+# Without this a crash can take its own traceback down with it: the Space's logs are the only
+# way to see one, and honcho's pipes are not a tty, so Python block-buffers into them.
+ENV PYTHONUNBUFFERED=1
 
 # Environment variables for Elasticsearch
 ENV ELASTIC_CONTAINER=true
