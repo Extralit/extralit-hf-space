@@ -52,12 +52,16 @@ COPY config/elasticsearch.yml /etc/elasticsearch/elasticsearch.yml
 # `uv pip install`, never `uv sync`: sync makes the environment match a lockfile and would
 # uninstall every server package it does not know about. `--python` names the venv explicitly
 # rather than trusting VIRTUAL_ENV, so this keeps working against older base images.
+# `-r pyproject.toml` installs the dependencies only. Installing the path instead would build
+# this repo as a package, and `packages = ["extralit_ocr"]` is not under the mount — so it
+# produced a code-less dist and leaned on hatchling tolerating the missing directory.
+# extralit_ocr is imported from /home/extralit, never from site-packages.
 # uv is bind-mounted, so the build never carries a copy of it into the shipped layers.
 RUN --mount=from=ghcr.io/astral-sh/uv:0.12.6,source=/uv,target=/usr/local/bin/uv \
     --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=/packages/pyproject.toml \
     UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=0 \
-    uv pip install --python /opt/venv/bin/python /packages && \
+    uv pip install --python /opt/venv/bin/python -r /packages/pyproject.toml && \
     apt-get remove -y wget gnupg && \
     apt-get autoremove -y
 
