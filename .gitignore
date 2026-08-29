@@ -208,3 +208,5 @@ __marimo__/
 
 # PDF files
 *.pdf
+# roborev snapshots
+/.roborev/
