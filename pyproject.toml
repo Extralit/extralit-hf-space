@@ -13,7 +13,7 @@ dependencies = [
     "redis",
     "httpx",
     "honcho~=2.0.0",
-    "pymupdf4llm~=0.0.27",
+    "pymupdf4llm>=1.29.0",
 ]
 
 [tool.hatch.build.targets.wheel]
